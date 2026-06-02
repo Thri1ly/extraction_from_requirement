@@ -137,6 +137,43 @@ def test_merge_approved_aliases_creates_non_signal_entities_when_requested():
     assert report["created_entities"] == 1
 
 
+def test_merge_approved_aliases_defaults_to_approved_jsonl_and_creates_missing_types():
+    dictionary = build_signal_dictionary([{"Signal": "S_VEHICLE_SPEED"}], signal_column="Signal")
+    approved_candidates = [
+        {
+            "mention": "MIL",
+            "canonical_name": "MIL",
+            "type": "indicator",
+        },
+        {
+            "mention": "vehicle speed",
+            "canonical_name": "S_VEHICLE_SPEED",
+            "type": "signal",
+        },
+    ]
+
+    merged, report = merge_approved_aliases(dictionary, approved_candidates)
+
+    by_name = {entity["canonical_name"]: entity for entity in merged}
+    assert by_name["MIL"]["type"] == "indicator"
+    assert "MIL" in by_name["MIL"]["aliases"]
+    assert "vehicle speed" in by_name["S_VEHICLE_SPEED"]["aliases"]
+    assert report["created_entities"] == 1
+    assert report["merged_aliases"] == 0
+
+
+def test_load_dictionary_accepts_jsonl_dictionary(tmp_path):
+    dictionary_path = tmp_path / "signals.jsonl"
+    dictionary_path.write_text(
+        '{"canonical_name":"S_VEHICLE_SPEED","type":"signal","aliases":["vehicle speed"]}\n',
+        encoding="utf-8",
+    )
+
+    entities = load_dictionary(dictionary_path)
+
+    assert entities == [{"canonical_name": "S_VEHICLE_SPEED", "type": "signal", "aliases": ["vehicle speed"]}]
+
+
 def test_load_dictionary_accepts_utf8_bom(tmp_path):
     dictionary_path = tmp_path / "signals.json"
     dictionary_path.write_text(

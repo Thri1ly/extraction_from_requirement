@@ -150,6 +150,9 @@ def write_dictionary(path: Path, entities: Sequence[JsonDict]) -> None:
     """Write the initial dictionary JSON file."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".jsonl":
+        write_jsonl(path, entities)
+        return
     payload = {"version": "initial", "entities": list(entities)}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -164,8 +167,10 @@ def write_jsonl(path: Path, rows: Iterable[JsonDict]) -> None:
 
 
 def load_dictionary(path: Path) -> List[JsonDict]:
-    """Load a dictionary JSON file that is either a list or {'entities': [...]}."""
+    """Load a dictionary JSON/JSONL file."""
 
+    if path.suffix.lower() == ".jsonl":
+        return load_jsonl(path)
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(payload, list):
         return payload
@@ -193,7 +198,7 @@ def load_jsonl(path: Path) -> List[JsonDict]:
 def merge_approved_aliases(
     dictionary: Sequence[JsonDict],
     candidates: Sequence[JsonDict],
-    create_missing: bool = False,
+    create_missing: bool = True,
 ) -> tuple[List[JsonDict], JsonDict]:
     """Merge approved alias candidates into dictionary entities.
 
@@ -212,7 +217,8 @@ def merge_approved_aliases(
     }
 
     for candidate in candidates:
-        if str(candidate.get("status", "")).lower() != "approved":
+        status = str(candidate.get("status", "")).lower()
+        if status and status != "approved":
             report["skipped_candidates"] += 1
             continue
 

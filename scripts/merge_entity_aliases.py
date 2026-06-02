@@ -11,13 +11,13 @@ from src.entity_dictionary_builder import merge_from_files
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Merge approved alias candidates into an entity dictionary.")
-    parser.add_argument("--dictionary", required=True, help="Path to signals/entity dictionary JSON.")
-    parser.add_argument("--candidates", required=True, help="Path to reviewed entity_alias_candidates.jsonl.")
+    parser = argparse.ArgumentParser(description="Merge reviewed approved alias JSONL into an entity dictionary.")
+    parser.add_argument("--dictionary", required=True, help="Path to signals/entity dictionary JSON or JSONL.")
+    parser.add_argument("--candidates", required=True, help="Path to approved alias JSONL from review_entity_alias_candidates.py.")
     parser.add_argument(
         "--output",
         default="config/entities/signals_merged.json",
-        help="Output merged dictionary JSON path. Defaults to not overwriting the input dictionary.",
+        help="Output merged dictionary path. Use .jsonl to write JSONL, otherwise JSON is written.",
     )
     parser.add_argument(
         "--report-output",
@@ -27,7 +27,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--create-missing",
         action="store_true",
-        help="Create new entities for approved candidates whose canonical_name is not in the dictionary.",
+        default=True,
+        help="Create new entities for approved candidates whose canonical_name is not in the dictionary. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-create-missing",
+        action="store_false",
+        dest="create_missing",
+        help="Do not create missing canonical entities; report them as unmatched instead.",
     )
     return parser
 
