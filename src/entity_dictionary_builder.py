@@ -34,6 +34,21 @@ DOMAIN_PHRASE_RE = re.compile(
 DEFAULT_SIGNAL_COLUMNS = ["signal", "signal name", "signal_name", "name", "canonical_name"]
 DEFAULT_TEXT_COLUMNS = ["requirement", "raw_text", "text", "description", "需求"]
 DEFAULT_ID_COLUMNS = ["requirement_id", "req id", "req_id", "id", "需求编号"]
+TYPE_ALIASES = {
+    "sig": "SIGNAL",
+    "signal": "SIGNAL",
+    "signals": "SIGNAL",
+    "signal_group": "SIGNAL_GROUP",
+    "signal group": "SIGNAL_GROUP",
+    "fault": "FAULT",
+    "faults": "FAULT",
+    "indicator": "INDICATOR",
+    "indicators": "INDICATOR",
+    "component": "COMPONENT",
+    "components": "COMPONENT",
+    "state": "STATE",
+    "states": "STATE",
+}
 
 
 def humanize_signal_name(signal_name: str) -> str:
@@ -43,6 +58,14 @@ def humanize_signal_name(signal_name: str) -> str:
     if name.upper().startswith("S_"):
         name = name[2:]
     return " ".join(part.lower() for part in name.split("_") if part)
+
+
+def normalize_entity_type(entity_type: object) -> str:
+    """Normalize user-entered entity type labels to canonical NER-style uppercase values."""
+
+    normalized = str(entity_type or "unknown").strip().replace("-", "_").lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return TYPE_ALIASES.get(normalized, normalized.replace(" ", "_").upper())
 
 
 def build_signal_dictionary(rows: Sequence[JsonDict], signal_column: str | None = None) -> List[JsonDict]:
@@ -59,7 +82,7 @@ def build_signal_dictionary(rows: Sequence[JsonDict], signal_column: str | None 
             entities.append(
                 {
                     "canonical_name": signal_name,
-                    "type": "signal",
+                    "type": normalize_entity_type("signal"),
                     "aliases": _unique_strings(aliases),
                     "members": [],
                     "unit": _get_optional_column(row, ["unit", "units"]),
@@ -93,7 +116,7 @@ def extract_alias_candidates(
                 grouped[key] = {
                     "mention": cleaned,
                     "suggested_canonical": suggestion["canonical_name"],
-                    "type": suggestion["type"],
+                    "type": normalize_entity_type(suggestion["type"]),
                     "confidence": suggestion["confidence"],
                     "evidence": [],
                     "status": "pending",
@@ -102,7 +125,7 @@ def extract_alias_candidates(
                 grouped[key]["evidence"].append(requirement_id)
             if suggestion["confidence"] > grouped[key]["confidence"]:
                 grouped[key]["suggested_canonical"] = suggestion["canonical_name"]
-                grouped[key]["type"] = suggestion["type"]
+                grouped[key]["type"] = normalize_entity_type(suggestion["type"])
                 grouped[key]["confidence"] = suggestion["confidence"]
     return sorted(grouped.values(), key=lambda item: (item["suggested_canonical"] or "", item["mention"].lower()))
 
@@ -120,15 +143,27 @@ def suggest_canonical(mention: str, dictionary: Sequence[JsonDict]) -> JsonDict:
             if not alias_norm:
                 continue
             if mention_norm == _normalize_for_match(canonical):
-                return {"canonical_name": canonical, "type": entity.get("type", "signal"), "confidence": 1.0}
+                return {
+                    "canonical_name": canonical,
+                    "type": normalize_entity_type(entity.get("type", "signal")),
+                    "confidence": 1.0,
+                }
             if mention_norm == alias_norm:
-                return {"canonical_name": canonical, "type": entity.get("type", "signal"), "confidence": 0.92}
+                return {
+                    "canonical_name": canonical,
+                    "type": normalize_entity_type(entity.get("type", "signal")),
+                    "confidence": 0.92,
+                }
             score = _token_overlap_score(mention_norm, alias_norm)
             if score > best["confidence"]:
-                best = {"canonical_name": canonical, "type": entity.get("type", "signal"), "confidence": round(score, 2)}
+                best = {
+                    "canonical_name": canonical,
+                    "type": normalize_entity_type(entity.get("type", "signal")),
+                    "confidence": round(score, 2),
+                }
 
     if mention.upper().startswith("DEM_"):
-        return {"canonical_name": mention.upper(), "type": "fault", "confidence": 1.0}
+        return {"canonical_name": mention.upper(), "type": normalize_entity_type("fault"), "confidence": 1.0}
     if mention.upper() == mention and len(mention) >= 2:
         return {"canonical_name": mention.upper(), "type": "indicator_or_component", "confidence": 0.5}
     return best
@@ -150,10 +185,11 @@ def write_dictionary(path: Path, entities: Sequence[JsonDict]) -> None:
     """Write the initial dictionary JSON file."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_entities = normalize_dictionary_entities(entities)
     if path.suffix.lower() == ".jsonl":
-        write_jsonl(path, entities)
+        write_jsonl(path, normalized_entities)
         return
-    payload = {"version": "initial", "entities": list(entities)}
+    payload = {"version": "initial", "entities": normalized_entities}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -170,13 +206,24 @@ def load_dictionary(path: Path) -> List[JsonDict]:
     """Load a dictionary JSON/JSONL file."""
 
     if path.suffix.lower() == ".jsonl":
-        return load_jsonl(path)
+        return normalize_dictionary_entities(load_jsonl(path))
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(payload, list):
-        return payload
+        return normalize_dictionary_entities(payload)
     if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
-        return payload["entities"]
+        return normalize_dictionary_entities(payload["entities"])
     raise ValueError(f"Dictionary file must be a list or contain an 'entities' list: {path}")
+
+
+def normalize_dictionary_entities(entities: Sequence[JsonDict]) -> List[JsonDict]:
+    """Return dictionary entities with normalized type labels."""
+
+    normalized = []
+    for entity in entities:
+        item = dict(entity)
+        item["type"] = normalize_entity_type(item.get("type", "UNKNOWN"))
+        normalized.append(item)
+    return normalized
 
 
 def load_jsonl(path: Path) -> List[JsonDict]:
@@ -206,7 +253,7 @@ def merge_approved_aliases(
     target with canonical_name; otherwise suggested_canonical is used.
     """
 
-    merged = [dict(entity) for entity in dictionary]
+    merged = normalize_dictionary_entities(dictionary)
     by_canonical = {str(entity.get("canonical_name")): entity for entity in merged}
     report: JsonDict = {
         "approved_candidates": 0,
@@ -234,7 +281,7 @@ def merge_approved_aliases(
         if entity is None and create_missing:
             entity = {
                 "canonical_name": canonical,
-                "type": candidate.get("type", "unknown"),
+                "type": normalize_entity_type(candidate.get("type", "unknown")),
                 "aliases": [canonical],
                 "members": [],
                 "source": "approved_alias_candidate",

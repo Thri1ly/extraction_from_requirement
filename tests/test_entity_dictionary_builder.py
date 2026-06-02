@@ -4,6 +4,7 @@ from src.entity_dictionary_builder import (
     humanize_signal_name,
     load_dictionary,
     merge_approved_aliases,
+    normalize_entity_type,
     suggest_canonical,
 )
 
@@ -23,7 +24,7 @@ def test_build_signal_dictionary_from_signal_rows():
 
     speed = entities[0]
     assert speed["canonical_name"] == "S_VEHICLE_SPEED"
-    assert speed["type"] == "signal"
+    assert speed["type"] == "SIGNAL"
     assert speed["unit"] == "kph"
     assert speed["component"] == "Vehicle"
     assert "S_VEHICLE_SPEED" in speed["aliases"]
@@ -37,6 +38,7 @@ def test_suggest_canonical_matches_humanized_alias():
     suggestion = suggest_canonical("vehicle speed", dictionary)
 
     assert suggestion["canonical_name"] == "S_VEHICLE_SPEED"
+    assert suggestion["type"] == "SIGNAL"
     assert suggestion["confidence"] >= 0.8
 
 
@@ -89,21 +91,21 @@ def test_merge_approved_aliases_adds_only_approved_mentions():
         {
             "mention": "vehicle speed signals",
             "suggested_canonical": "S_VEHICLE_SPEED",
-            "type": "signal",
+            "type": "SIGNAL",
             "status": "approved",
             "evidence": ["REQ_101"],
         },
         {
             "mention": "driver input torque",
             "canonical_name": "S_DRIVER_TORQUE",
-            "type": "signal",
+            "type": "SIGNAL",
             "status": "approved",
             "evidence": ["REQ_102"],
         },
         {
             "mention": "bad candidate",
             "suggested_canonical": "S_VEHICLE_SPEED",
-            "type": "signal",
+            "type": "SIGNAL",
             "status": "rejected",
         },
     ]
@@ -124,7 +126,7 @@ def test_merge_approved_aliases_creates_non_signal_entities_when_requested():
         {
             "mention": "column torque implausible fault",
             "canonical_name": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
-            "type": "fault",
+            "type": "FAULT",
             "status": "approved",
         }
     ]
@@ -132,7 +134,7 @@ def test_merge_approved_aliases_creates_non_signal_entities_when_requested():
     merged, report = merge_approved_aliases(dictionary, candidates, create_missing=True)
 
     by_name = {entity["canonical_name"]: entity for entity in merged}
-    assert by_name["DEM_COLUMN_TORQUE_IMPLAUSIBLE"]["type"] == "fault"
+    assert by_name["DEM_COLUMN_TORQUE_IMPLAUSIBLE"]["type"] == "FAULT"
     assert "column torque implausible fault" in by_name["DEM_COLUMN_TORQUE_IMPLAUSIBLE"]["aliases"]
     assert report["created_entities"] == 1
 
@@ -143,23 +145,46 @@ def test_merge_approved_aliases_defaults_to_approved_jsonl_and_creates_missing_t
         {
             "mention": "MIL",
             "canonical_name": "MIL",
-            "type": "indicator",
+            "type": "INDICATOR",
         },
         {
             "mention": "vehicle speed",
             "canonical_name": "S_VEHICLE_SPEED",
-            "type": "signal",
+            "type": "SIGNAL",
         },
     ]
 
     merged, report = merge_approved_aliases(dictionary, approved_candidates)
 
     by_name = {entity["canonical_name"]: entity for entity in merged}
-    assert by_name["MIL"]["type"] == "indicator"
+    assert by_name["MIL"]["type"] == "INDICATOR"
     assert "MIL" in by_name["MIL"]["aliases"]
     assert "vehicle speed" in by_name["S_VEHICLE_SPEED"]["aliases"]
     assert report["created_entities"] == 1
     assert report["merged_aliases"] == 0
+
+
+def test_merge_approved_aliases_normalizes_type_case():
+    dictionary = build_signal_dictionary([{"Signal": "S_VEHICLE_SPEED"}], signal_column="Signal")
+    approved_candidates = [
+        {
+            "mention": "vehicle speed signals",
+            "canonical_name": "S_VEHICLE_SPEED",
+            "type": "SIGNAL",
+        },
+        {
+            "mention": "vehicle speed invalid fault",
+            "canonical_name": "DEM_VEHICLE_SPEED_INVALID",
+            "type": "FAULT",
+        },
+    ]
+
+    merged, report = merge_approved_aliases(dictionary, approved_candidates)
+
+    by_name = {entity["canonical_name"]: entity for entity in merged}
+    assert by_name["S_VEHICLE_SPEED"]["type"] == "SIGNAL"
+    assert by_name["DEM_VEHICLE_SPEED_INVALID"]["type"] == "FAULT"
+    assert report["created_entities"] == 1
 
 
 def test_load_dictionary_accepts_jsonl_dictionary(tmp_path):
@@ -171,7 +196,14 @@ def test_load_dictionary_accepts_jsonl_dictionary(tmp_path):
 
     entities = load_dictionary(dictionary_path)
 
-    assert entities == [{"canonical_name": "S_VEHICLE_SPEED", "type": "signal", "aliases": ["vehicle speed"]}]
+    assert entities == [{"canonical_name": "S_VEHICLE_SPEED", "type": "SIGNAL", "aliases": ["vehicle speed"]}]
+
+
+def test_normalize_entity_type_outputs_ner_style_uppercase_labels():
+    assert normalize_entity_type("signal") == "SIGNAL"
+    assert normalize_entity_type("SIGNAL") == "SIGNAL"
+    assert normalize_entity_type("signal group") == "SIGNAL_GROUP"
+    assert normalize_entity_type("fault") == "FAULT"
 
 
 def test_load_dictionary_accepts_utf8_bom(tmp_path):

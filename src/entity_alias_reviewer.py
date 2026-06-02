@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Callable, List, Sequence
 
-from src.entity_dictionary_builder import load_jsonl, write_jsonl
+from src.entity_dictionary_builder import load_jsonl, normalize_entity_type, write_jsonl
 from src.schemas import JsonDict
 
 
@@ -32,7 +32,7 @@ def review_candidates(
 
         if canonical_name:
             current["canonical_name"] = canonical_name
-        current["type"] = entity_type or default_type
+        current["type"] = normalize_entity_type(entity_type or default_type)
         current["status"] = status
         reviewed.append(current)
     return reviewed

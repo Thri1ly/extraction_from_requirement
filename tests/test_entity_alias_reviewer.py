@@ -15,7 +15,7 @@ def test_review_candidates_keeps_defaults_on_blank_inputs():
     reviewed = review_candidates(candidates, input_func=lambda _: next(answers), print_func=lambda _: None)
 
     assert reviewed[0]["canonical_name"] == "S_VEHICLE_SPEED"
-    assert reviewed[0]["type"] == "signal"
+    assert reviewed[0]["type"] == "SIGNAL"
     assert reviewed[0]["status"] == "approved"
 
 
@@ -33,7 +33,7 @@ def test_review_candidates_allows_field_changes():
     reviewed = review_candidates(candidates, input_func=lambda _: next(answers), print_func=lambda _: None)
 
     assert reviewed[0]["canonical_name"] == "S_DRIVER_INPUT_TORQUE"
-    assert reviewed[0]["type"] == "signal"
+    assert reviewed[0]["type"] == "SIGNAL"
     assert reviewed[0]["status"] == "approved"
 
 
