@@ -2,6 +2,8 @@ from src.entity_dictionary_builder import (
     build_signal_dictionary,
     extract_alias_candidates,
     humanize_signal_name,
+    load_dictionary,
+    merge_approved_aliases,
     suggest_canonical,
 )
 
@@ -73,3 +75,75 @@ def test_extract_alias_candidates_from_requirement_rows():
     assert by_mention["torque demand"]["suggested_canonical"] == "S_TORQUE_DEMAND"
     assert by_mention["Driver Torque"]["suggested_canonical"] == "S_DRIVER_TORQUE"
     assert by_mention["S_TORQUE_DEMAND"]["suggested_canonical"] == "S_TORQUE_DEMAND"
+
+
+def test_merge_approved_aliases_adds_only_approved_mentions():
+    dictionary = build_signal_dictionary(
+        [
+            {"Signal": "S_VEHICLE_SPEED"},
+            {"Signal": "S_DRIVER_TORQUE"},
+        ],
+        signal_column="Signal",
+    )
+    candidates = [
+        {
+            "mention": "vehicle speed signals",
+            "suggested_canonical": "S_VEHICLE_SPEED",
+            "type": "signal",
+            "status": "approved",
+            "evidence": ["REQ_101"],
+        },
+        {
+            "mention": "driver input torque",
+            "canonical_name": "S_DRIVER_TORQUE",
+            "type": "signal",
+            "status": "approved",
+            "evidence": ["REQ_102"],
+        },
+        {
+            "mention": "bad candidate",
+            "suggested_canonical": "S_VEHICLE_SPEED",
+            "type": "signal",
+            "status": "rejected",
+        },
+    ]
+
+    merged, report = merge_approved_aliases(dictionary, candidates)
+
+    by_name = {entity["canonical_name"]: entity for entity in merged}
+    assert "vehicle speed signals" in by_name["S_VEHICLE_SPEED"]["aliases"]
+    assert "driver input torque" in by_name["S_DRIVER_TORQUE"]["aliases"]
+    assert "bad candidate" not in by_name["S_VEHICLE_SPEED"]["aliases"]
+    assert report["merged_aliases"] == 2
+    assert report["skipped_candidates"] == 1
+
+
+def test_merge_approved_aliases_creates_non_signal_entities_when_requested():
+    dictionary = build_signal_dictionary([{"Signal": "S_VEHICLE_SPEED"}], signal_column="Signal")
+    candidates = [
+        {
+            "mention": "column torque implausible fault",
+            "canonical_name": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+            "type": "fault",
+            "status": "approved",
+        }
+    ]
+
+    merged, report = merge_approved_aliases(dictionary, candidates, create_missing=True)
+
+    by_name = {entity["canonical_name"]: entity for entity in merged}
+    assert by_name["DEM_COLUMN_TORQUE_IMPLAUSIBLE"]["type"] == "fault"
+    assert "column torque implausible fault" in by_name["DEM_COLUMN_TORQUE_IMPLAUSIBLE"]["aliases"]
+    assert report["created_entities"] == 1
+
+
+def test_load_dictionary_accepts_utf8_bom(tmp_path):
+    dictionary_path = tmp_path / "signals.json"
+    dictionary_path.write_text(
+        '\ufeff{"version":"initial","entities":[{"canonical_name":"S_VEHICLE_SPEED","aliases":[]}]}',
+        encoding="utf-8",
+    )
+
+    entities = load_dictionary(dictionary_path)
+
+    assert entities[0]["canonical_name"] == "S_VEHICLE_SPEED"

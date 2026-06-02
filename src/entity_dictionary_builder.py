@@ -163,6 +163,107 @@ def write_jsonl(path: Path, rows: Iterable[JsonDict]) -> None:
             file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def load_dictionary(path: Path) -> List[JsonDict]:
+    """Load a dictionary JSON file that is either a list or {'entities': [...]}."""
+
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
+        return payload["entities"]
+    raise ValueError(f"Dictionary file must be a list or contain an 'entities' list: {path}")
+
+
+def load_jsonl(path: Path) -> List[JsonDict]:
+    """Load JSONL records, skipping blank lines."""
+
+    rows: List[JsonDict] = []
+    with path.open("r", encoding="utf-8-sig") as file:
+        for line_number, line in enumerate(file, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSONL at {path}:{line_number}: {exc}") from exc
+    return rows
+
+
+def merge_approved_aliases(
+    dictionary: Sequence[JsonDict],
+    candidates: Sequence[JsonDict],
+    create_missing: bool = False,
+) -> tuple[List[JsonDict], JsonDict]:
+    """Merge approved alias candidates into dictionary entities.
+
+    Only candidates with status='approved' are merged. Users may correct the
+    target with canonical_name; otherwise suggested_canonical is used.
+    """
+
+    merged = [dict(entity) for entity in dictionary]
+    by_canonical = {str(entity.get("canonical_name")): entity for entity in merged}
+    report: JsonDict = {
+        "approved_candidates": 0,
+        "merged_aliases": 0,
+        "created_entities": 0,
+        "skipped_candidates": 0,
+        "unmatched_candidates": [],
+    }
+
+    for candidate in candidates:
+        if str(candidate.get("status", "")).lower() != "approved":
+            report["skipped_candidates"] += 1
+            continue
+
+        report["approved_candidates"] += 1
+        mention = clean_mention(str(candidate.get("mention", "")))
+        canonical = str(candidate.get("canonical_name") or candidate.get("suggested_canonical") or "").strip()
+        if not mention or not canonical:
+            report["skipped_candidates"] += 1
+            report["unmatched_candidates"].append(candidate)
+            continue
+
+        entity = by_canonical.get(canonical)
+        if entity is None and create_missing:
+            entity = {
+                "canonical_name": canonical,
+                "type": candidate.get("type", "unknown"),
+                "aliases": [canonical],
+                "members": [],
+                "source": "approved_alias_candidate",
+            }
+            merged.append(entity)
+            by_canonical[canonical] = entity
+            report["created_entities"] += 1
+
+        if entity is None:
+            report["skipped_candidates"] += 1
+            report["unmatched_candidates"].append(candidate)
+            continue
+
+        aliases = list(entity.get("aliases", []))
+        if not _contains_case_insensitive(aliases, mention):
+            aliases.append(mention)
+            report["merged_aliases"] += 1
+        entity["aliases"] = _unique_strings(aliases)
+
+    return merged, report
+
+
+def merge_from_files(args: argparse.Namespace) -> JsonDict:
+    """Merge approved JSONL candidates into a dictionary JSON file."""
+
+    dictionary = load_dictionary(Path(args.dictionary))
+    candidates = load_jsonl(Path(args.candidates))
+    merged, report = merge_approved_aliases(dictionary, candidates, create_missing=args.create_missing)
+    write_dictionary(Path(args.output), merged)
+    if args.report_output:
+        Path(args.report_output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.report_output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
 def build_from_files(args: argparse.Namespace) -> tuple[List[JsonDict], List[JsonDict]]:
     """Build dictionary and candidates from command-line inputs."""
 
@@ -321,6 +422,11 @@ def _unique_strings(values: Iterable[str]) -> List[str]:
         seen.add(key)
         result.append(value)
     return result
+
+
+def _contains_case_insensitive(values: Iterable[str], target: str) -> bool:
+    target_key = target.lower()
+    return any(str(value).lower() == target_key for value in values)
 
 
 def _normalize_for_match(value: str) -> str:
