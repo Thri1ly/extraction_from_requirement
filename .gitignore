@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+cnki_cookie.json
+cnki_fulltext/
+cnki_fulltext_texts/
+vendor/
+
+*.pdf
+*.xlsx
