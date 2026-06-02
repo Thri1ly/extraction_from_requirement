@@ -1,6 +1,8 @@
 import re
-from typing import Dict, Iterable, List
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence
 
+from src.entity_dictionary_builder import load_dictionary, load_jsonl, normalize_entity_type, write_jsonl
 from src.schemas import JsonDict, NormalizedEntity, unique_dicts
 
 
@@ -88,11 +90,48 @@ def normalize_mention(mention: str) -> JsonDict:
         ).to_dict()
     return NormalizedEntity(
         mention=mention,
-        type="unknown",
+        type="UNKNOWN",
         canonical_name=mention,
         members=[],
         source="rule",
     ).to_dict()
+
+
+def build_dictionary_index(dictionary: Sequence[JsonDict]) -> Dict[str, JsonDict]:
+    """Build a case-insensitive lookup over canonical names and aliases."""
+
+    index: Dict[str, JsonDict] = {}
+    for entity in dictionary:
+        aliases = [entity.get("canonical_name", "")] + list(entity.get("aliases", []))
+        for alias in aliases:
+            key = match_key(str(alias))
+            if key:
+                index[key] = entity
+    return index
+
+
+def normalize_mention_with_dictionary(
+    mention: str,
+    dictionary_index: Dict[str, JsonDict],
+    source: str,
+) -> JsonDict | None:
+    """Normalize one mention using an external entity dictionary."""
+
+    entity = dictionary_index.get(match_key(mention))
+    if not entity:
+        return None
+
+    normalized = {
+        "mention": mention,
+        "type": normalize_entity_type(entity.get("type", "UNKNOWN")),
+        "canonical_name": str(entity.get("canonical_name", mention)),
+        "members": list(entity.get("members", [])),
+        "source": source,
+    }
+    for field_name in ("unit", "component", "description"):
+        if entity.get(field_name):
+            normalized[field_name] = entity[field_name]
+    return normalized
 
 
 def find_known_mentions(text: str) -> Iterable[JsonDict]:
@@ -123,18 +162,36 @@ def normalize_entities(
     text: str,
     rule_entities: List[JsonDict] | None = None,
     ner_entities: List[JsonDict] | None = None,
+    dictionary: Sequence[JsonDict] | None = None,
+    dictionary_path: str | Path | None = None,
+    unknown_candidates_path: str | Path | None = None,
+    requirement_id: str | None = None,
 ) -> List[JsonDict]:
     """Normalize rule/NER entities plus mentions discovered from raw text."""
 
-    normalized: List[JsonDict] = list(find_known_mentions(text))
+    if dictionary_path:
+        dictionary = load_dictionary(Path(dictionary_path))
+    dictionary_index = build_dictionary_index(dictionary or [])
+    normalized: List[JsonDict] = [] if dictionary_index else list(find_known_mentions(text))
+    unknown_candidates: List[JsonDict] = []
     for source_name, source_entities in (("rule", rule_entities or []), ("ner", ner_entities or [])):
         for entity in source_entities:
             mention = str(entity.get("mention") or entity.get("text") or entity.get("name") or "")
             if not mention:
                 continue
-            item = normalize_mention(mention)
+            item = normalize_mention_with_dictionary(mention, dictionary_index, source_name) if dictionary_index else None
+            if item is None:
+                item = normalize_mention(mention)
+                item["type"] = normalize_entity_type(entity.get("type") or item.get("type"))
+                if dictionary is not None or dictionary_path is not None:
+                    unknown_candidates.append(
+                        build_unknown_candidate(mention, item["type"], source_name, requirement_id=requirement_id)
+                    )
             item["source"] = source_name
             normalized.append(item)
+
+    if unknown_candidates_path and unknown_candidates:
+        write_unknown_candidates(Path(unknown_candidates_path), unknown_candidates)
 
     return unique_dicts(normalized, ["mention", "canonical_name", "source"])
 
@@ -143,3 +200,56 @@ def canonical_for_mention(mention: str) -> str:
     """Return the canonical name for a mention."""
 
     return normalize_mention(mention)["canonical_name"]
+
+
+def build_unknown_candidate(
+    mention: str,
+    entity_type: str,
+    source: str,
+    requirement_id: str | None = None,
+) -> JsonDict:
+    """Build a pending candidate for a dictionary miss."""
+
+    candidate: JsonDict = {
+        "mention": mention,
+        "suggested_canonical": "",
+        "type": normalize_entity_type(entity_type),
+        "status": "pending",
+        "source": source,
+        "evidence": [],
+    }
+    if requirement_id:
+        candidate["evidence"].append(requirement_id)
+    return candidate
+
+
+def write_unknown_candidates(path: Path, candidates: Sequence[JsonDict]) -> None:
+    """Merge unknown candidates into JSONL without duplicating mention/type pairs."""
+
+    existing = load_jsonl(path) if path.exists() else []
+    by_key: Dict[tuple[str, str], JsonDict] = {}
+    for candidate in existing + list(candidates):
+        mention = str(candidate.get("mention", ""))
+        entity_type = normalize_entity_type(candidate.get("type", "UNKNOWN"))
+        key = (match_key(mention), entity_type)
+        if key not in by_key:
+            item = dict(candidate)
+            item["type"] = entity_type
+            item.setdefault("status", "pending")
+            item.setdefault("suggested_canonical", "")
+            item.setdefault("evidence", [])
+            by_key[key] = item
+            continue
+        target = by_key[key]
+        target.setdefault("evidence", [])
+        for evidence in candidate.get("evidence", []):
+            if evidence not in target["evidence"]:
+                target["evidence"].append(evidence)
+
+    write_jsonl(path, by_key.values())
+
+
+def match_key(value: str) -> str:
+    """Normalize text for alias lookup."""
+
+    return re.sub(r"\s+", " ", value.strip().lower())
