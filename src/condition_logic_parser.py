@@ -18,6 +18,7 @@ def parse_condition_logic(block: JsonDict) -> JsonDict:
         for line in lines
         if str(line).upper() not in LOGIC_MARKERS
     ]
+    children.extend(parse_condition_logic(nested_block) for nested_block in block.get("nested_condition_blocks", []))
     return {
         "type": "condition_group",
         "block_id": block.get("block_id"),

@@ -36,14 +36,26 @@ def parse_condition_groups(text: str, normalized_entities: List[JsonDict] | None
     groups: List[JsonDict] = []
     for block in extract_condition_blocks(text):
         group = parse_condition_logic(block)
-        group["children"] = [
-            parse_condition_line(child["text"], normalized_entities)
-            if child.get("type") == "condition_line"
-            else child
-            for child in group.get("children", [])
-        ]
+        group["children"] = parse_condition_group_children(group.get("children", []), normalized_entities)
         groups.append(group)
     return groups
+
+
+def parse_condition_group_children(
+    children: List[JsonDict],
+    normalized_entities: List[JsonDict] | None = None,
+) -> List[JsonDict]:
+    """Recursively parse condition group children into atomic condition objects."""
+
+    parsed_children: List[JsonDict] = []
+    for child in children:
+        if child.get("type") == "condition_line":
+            parsed_children.append(parse_condition_line(child["text"], normalized_entities))
+            continue
+        if child.get("type") == "condition_group":
+            child = {**child, "children": parse_condition_group_children(child.get("children", []), normalized_entities)}
+        parsed_children.append(child)
+    return parsed_children
 
 
 def flatten_condition_groups(groups: List[JsonDict]) -> List[JsonDict]:

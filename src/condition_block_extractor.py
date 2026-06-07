@@ -42,6 +42,11 @@ CONDITION_LIST_HEADER_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+NESTED_CONDITION_HEADER_RE = re.compile(
+    r"^(?P<logic>ANY|ALL)\s+of\s+(?:below|the\s+following|following)\s+conditions?\s+(?:are|is)\s+(?:met|satisfied)\s*:?\s*$",
+    flags=re.IGNORECASE,
+)
+
 TRIGGER_PREFIX_RE = re.compile(
     rf"^(?P<trigger>{_prefix_pattern(TRIGGER_PREFIXES)})\b\s*:?\s*(?P<condition>.*)$",
     flags=re.IGNORECASE,
@@ -105,9 +110,10 @@ def parse_condition_rows(condition_text: str) -> tuple[List[str], List[str], Lis
         line = raw_line.strip().strip("-* ")
         if not line:
             continue
-        marker = line.upper()
-        if marker in LOGIC_MARKERS:
-            logic_markers.append(marker)
+        leading_marker, line = _split_leading_logic_marker(line)
+        if leading_marker:
+            logic_markers.append(leading_marker)
+        if not line:
             continue
         _trigger, condition = _strip_single_line_trigger(line)
         invalid_marker = condition.upper()
@@ -171,8 +177,8 @@ def _extract_processed_condition_block(text: str) -> JsonDict | None:
         logic_hint = header.get("logic_hint") or _first_logic_marker(logic_markers)
         return _build_processed_block(header["trigger"], logic_hint, lines, logic_markers, skipped)
 
-    trigger, lines, logic_markers, skipped = _parse_processed_condition_lines(raw_lines)
-    return _build_processed_block(trigger, _first_logic_marker(logic_markers), lines, logic_markers, skipped)
+    trigger, lines, logic_markers, skipped, nested_blocks = _parse_processed_condition_lines(raw_lines)
+    return _build_processed_block(trigger, _first_logic_marker(logic_markers), lines, logic_markers, skipped, nested_blocks)
 
 
 def _strip_single_line_trigger(line: str) -> tuple[str, str]:
@@ -182,27 +188,65 @@ def _strip_single_line_trigger(line: str) -> tuple[str, str]:
     return (_normalize_spaces(match.group("trigger")).lower(), _clean_condition_fragment(match.group("condition")))
 
 
-def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[str], List[str], List[JsonDict]]:
+def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[str], List[str], List[JsonDict], List[JsonDict]]:
     trigger = ""
     lines: List[str] = []
     logic_markers: List[str] = []
     skipped_lines: List[JsonDict] = []
-    for raw_line in raw_lines:
-        marker = raw_line.upper()
-        if marker in LOGIC_MARKERS:
-            logic_markers.append(marker)
+    nested_blocks: List[JsonDict] = []
+    index = 0
+    while index < len(raw_lines):
+        raw_line = raw_lines[index]
+        leading_marker, line = _split_leading_logic_marker(raw_line)
+        if leading_marker:
+            logic_markers.append(leading_marker)
+        if not line:
+            index += 1
             continue
-        line_trigger, condition = _strip_single_line_trigger(raw_line)
+        nested_header = _match_nested_condition_header(line)
+        if nested_header:
+            nested_source = "\n".join(raw_lines[index + 1 :])
+            nested_lines, nested_logic_markers, nested_skipped = parse_condition_rows(nested_source)
+            nested_blocks.append(
+                {
+                    "block_id": f"cond_block_1_nested_{len(nested_blocks) + 1}",
+                    "trigger": line,
+                    "logic_hint": nested_header["logic_hint"],
+                    "condition_text": "\n".join(nested_lines),
+                    "condition_lines": nested_lines,
+                    "logic_markers": nested_logic_markers,
+                    "skipped_lines": nested_skipped,
+                }
+            )
+            break
+        line_trigger, condition = _strip_single_line_trigger(line)
         if line_trigger and not trigger:
             trigger = line_trigger
         if not condition:
+            index += 1
             continue
         invalid_marker = condition.upper()
         if invalid_marker in INVALID_CONDITION_LINES:
             skipped_lines.append({"line": condition, "reason": "invalid_condition_line"})
+            index += 1
             continue
         lines.append(condition)
-    return trigger, lines, logic_markers, skipped_lines
+        index += 1
+    return trigger, lines, logic_markers, skipped_lines, nested_blocks
+
+
+def _split_leading_logic_marker(line: str) -> tuple[str | None, str]:
+    match = re.match(r"^(?P<marker>AND|OR)\b\s*(?P<rest>.*)$", line.strip(), flags=re.IGNORECASE)
+    if not match:
+        return None, line
+    return match.group("marker").upper(), match.group("rest").strip()
+
+
+def _match_nested_condition_header(line: str) -> JsonDict | None:
+    match = NESTED_CONDITION_HEADER_RE.match(line)
+    if not match:
+        return None
+    return {"logic_hint": match.group("logic").upper()}
 
 
 def _match_processed_header(line: str) -> JsonDict | None:
@@ -233,8 +277,9 @@ def _build_processed_block(
     condition_lines: List[str],
     logic_markers: List[str],
     skipped_lines: List[JsonDict],
+    nested_condition_blocks: List[JsonDict] | None = None,
 ) -> JsonDict:
-    return {
+    block = {
         "block_id": "cond_block_1",
         "trigger": trigger,
         "logic_hint": logic_hint,
@@ -244,6 +289,9 @@ def _build_processed_block(
         "logic_markers": logic_markers,
         "skipped_lines": skipped_lines,
     }
+    if nested_condition_blocks:
+        block["nested_condition_blocks"] = nested_condition_blocks
+    return block
 
 
 def _split_inline_logic_markers(line: str) -> List[str]:

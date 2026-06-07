@@ -225,6 +225,79 @@ B"""
     assert block["logic_markers"] == ["AND"]
 
 
+def test_extract_nested_below_condition_block_preserves_parent_and_child_logic():
+    text = """when conditionA
+AND conditionB
+AND any of below conditions is met:
+condition1
+condition2"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "when"
+    assert block["logic_hint"] == "AND"
+    assert block["condition_lines"] == ["conditionA", "conditionB"]
+    assert block["logic_markers"] == ["AND", "AND"]
+    assert block["nested_condition_blocks"] == [
+        {
+            "block_id": "cond_block_1_nested_1",
+            "trigger": "any of below conditions is met:",
+            "logic_hint": "ANY",
+            "condition_text": "condition1\ncondition2",
+            "condition_lines": ["condition1", "condition2"],
+            "logic_markers": [],
+            "skipped_lines": [],
+        }
+    ]
+
+
+def test_parse_condition_logic_outputs_nested_condition_group():
+    block = extract_condition_blocks(
+        """when conditionA
+AND conditionB
+AND any of below conditions is met:
+condition1
+condition2"""
+    )[0]
+
+    group = parse_condition_logic(block)
+
+    assert group["logic"] == "AND"
+    assert group["children"] == [
+        {"type": "condition_line", "text": "conditionA"},
+        {"type": "condition_line", "text": "conditionB"},
+        {
+            "type": "condition_group",
+            "block_id": "cond_block_1_nested_1",
+            "logic": "ANY",
+            "trigger": "any of below conditions is met:",
+            "children": [
+                {"type": "condition_line", "text": "condition1"},
+                {"type": "condition_line", "text": "condition2"},
+            ],
+            "need_review": False,
+        },
+    ]
+
+
+def test_parse_conditions_parses_nested_condition_group_children():
+    conditions = parse_conditions(
+        """when DEM_PARENT_FAULT is Active
+AND any of below conditions is met:
+S_VEHICLE_SPEED > 10kph
+S_COLUMN_TORQUE > 5Nm"""
+    )
+
+    group = by_type(conditions, "condition_group")[0]
+    nested_group = by_type(group["children"], "condition_group")[0]
+
+    assert nested_group["logic"] == "ANY"
+    assert nested_group["children"][0]["type"] == "threshold_condition"
+    assert nested_group["children"][0]["signal"] == "S_VEHICLE_SPEED"
+    assert nested_group["children"][1]["type"] == "threshold_condition"
+    assert nested_group["children"][1]["signal"] == "S_COLUMN_TORQUE"
+
+
 def test_fusion_builder_parses_conditions_field_instead_of_raw_text():
     from src.fusion_builder import build_enhanced_requirement
 
