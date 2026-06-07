@@ -6,19 +6,38 @@ from src.schemas import JsonDict
 
 INVALID_CONDITION_LINES = {"NORMAL EXIT", "FAULT EXIT"}
 LOGIC_MARKERS = {"AND", "OR"}
+TRIGGER_PREFIXES = [
+    "in case of",
+    "during",
+    "after",
+    "when",
+    "if",
+]
+CONDITION_HEADER_PREFIXES = [
+    "under the following conditions",
+    "under following conditions",
+]
+
+
+def _prefix_pattern(prefixes: List[str]) -> str:
+    sorted_prefixes = sorted(prefixes, key=len, reverse=True)
+    return "|".join(re.escape(prefix).replace(r"\ ", r"\s+") for prefix in sorted_prefixes)
+
 
 BELOW_CONDITIONS_RE = re.compile(
     r"(?P<action>.*?)\s+(?P<trigger>if\s+below\s+(?P<logic>ALL|ANY)\s+conditions\s+are\s+met)\s*:\s*(?P<conditions>.+)",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
-PROCESSED_HEADER_RE = re.compile(
-    r"^(?P<trigger>(?:when|if)\s+(?P<logic>ALL|ANY)\b.*?:?)$",
+PROCESSED_HEADER_RE = re.compile(r"^(?P<trigger>(?:when|if)\b.*\b(?P<logic>ALL|ANY)\b.*?:?)$", flags=re.I)
+
+TRIGGER_PREFIX_RE = re.compile(
+    rf"^(?P<trigger>{_prefix_pattern(TRIGGER_PREFIXES)})\b\s*:?\s*(?P<condition>.*)$",
     flags=re.IGNORECASE,
 )
 
-TRIGGER_PREFIX_RE = re.compile(
-    r"^(?P<trigger>when|if|in\s+case\s+of)\b\s*(?P<condition>.*)$",
+CONDITION_HEADER_PREFIX_RE = re.compile(
+    rf"^(?P<trigger>{_prefix_pattern(CONDITION_HEADER_PREFIXES)})\b\s*:?\s*$",
     flags=re.IGNORECASE,
 )
 
@@ -129,11 +148,12 @@ def _extract_processed_condition_block(text: str) -> JsonDict | None:
         return _build_processed_block(trigger, "ALL", lines, logic_markers, skipped)
 
     first_line = raw_lines[0]
-    header = PROCESSED_HEADER_RE.match(first_line)
+    header = _match_processed_header(first_line)
     if header:
         condition_source = "\n".join(raw_lines[1:])
         lines, logic_markers, skipped = parse_condition_rows(condition_source)
-        return _build_processed_block(first_line, header.group("logic").upper(), lines, logic_markers, skipped)
+        logic_hint = header.get("logic_hint") or _first_logic_marker(logic_markers)
+        return _build_processed_block(header["trigger"], logic_hint, lines, logic_markers, skipped)
 
     trigger, lines, logic_markers, skipped = _parse_processed_condition_lines(raw_lines)
     return _build_processed_block(trigger, _first_logic_marker(logic_markers), lines, logic_markers, skipped)
@@ -143,7 +163,7 @@ def _strip_single_line_trigger(line: str) -> tuple[str, str]:
     match = TRIGGER_PREFIX_RE.match(line)
     if not match:
         return "", line
-    return (_normalize_spaces(match.group("trigger")).lower(), match.group("condition").strip())
+    return (_normalize_spaces(match.group("trigger")).lower(), _clean_condition_fragment(match.group("condition")))
 
 
 def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[str], List[str], List[JsonDict]]:
@@ -159,12 +179,29 @@ def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[st
         line_trigger, condition = _strip_single_line_trigger(raw_line)
         if line_trigger and not trigger:
             trigger = line_trigger
+        if not condition:
+            continue
         invalid_marker = condition.upper()
         if invalid_marker in INVALID_CONDITION_LINES:
             skipped_lines.append({"line": condition, "reason": "invalid_condition_line"})
             continue
         lines.append(condition)
     return trigger, lines, logic_markers, skipped_lines
+
+
+def _match_processed_header(line: str) -> JsonDict | None:
+    logic_header = PROCESSED_HEADER_RE.match(line)
+    if logic_header:
+        return {"trigger": line, "logic_hint": logic_header.group("logic").upper()}
+    configured_header = CONDITION_HEADER_PREFIX_RE.match(line)
+    if configured_header:
+        return {"trigger": line, "logic_hint": None}
+    return None
+
+
+def _clean_condition_fragment(text: str) -> str:
+    cleaned = text.strip()
+    return "" if cleaned == ":" else cleaned
 
 
 def _first_logic_marker(logic_markers: List[str]) -> str | None:

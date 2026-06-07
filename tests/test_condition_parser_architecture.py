@@ -157,6 +157,44 @@ s_vehicle_speed1 is invalid or s_vehicle_speed2 is invalid"""
     assert block["logic_markers"] == []
 
 
+def test_extract_trigger_only_header_does_not_emit_colon_condition():
+    text = """if:
+conditionA
+OR
+ConditionB"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "if"
+    assert block["logic_hint"] == "OR"
+    assert block["condition_lines"] == ["conditionA", "ConditionB"]
+    assert block["logic_markers"] == ["OR"]
+
+
+def test_extract_single_processed_condition_uses_configured_temporal_trigger_prefixes():
+    during_block = extract_condition_blocks("during ABC is active")[0]
+    after_block = extract_condition_blocks("after DEF is inactive")[0]
+
+    assert during_block["trigger"] == "during"
+    assert during_block["condition_lines"] == ["ABC is active"]
+    assert after_block["trigger"] == "after"
+    assert after_block["condition_lines"] == ["DEF is inactive"]
+
+
+def test_extract_configured_condition_header_prefix_is_not_condition_line():
+    text = """under following conditions:
+Condition1
+AND
+Condition2"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "under following conditions:"
+    assert block["logic_hint"] == "AND"
+    assert block["condition_lines"] == ["Condition1", "Condition2"]
+    assert block["logic_markers"] == ["AND"]
+
+
 def test_fusion_builder_parses_conditions_field_instead_of_raw_text():
     from src.fusion_builder import build_enhanced_requirement
 
