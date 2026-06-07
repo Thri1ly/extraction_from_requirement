@@ -10,7 +10,8 @@ def parse_condition_logic(block: JsonDict) -> JsonDict:
     """Build a shallow condition group from condition lines and logic markers."""
 
     lines = list(block.get("condition_lines", []))
-    marker_logic = _first_logic_marker(lines)
+    logic_markers = list(block.get("logic_markers", []))
+    marker_logic = _first_logic_marker(logic_markers) or _first_logic_marker(lines)
     logic = str(block.get("logic_hint") or marker_logic or "ALL").upper()
     children = [
         {"type": "condition_line", "text": line}

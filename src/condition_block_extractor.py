@@ -29,7 +29,7 @@ def extract_condition_blocks(text: str) -> List[JsonDict]:
     blocks: List[JsonDict] = []
     below_block = BELOW_CONDITIONS_RE.match(text.strip())
     if below_block:
-        condition_lines, _skipped = filter_condition_lines(split_condition_lines(below_block.group("conditions")))
+        condition_lines, logic_markers, _skipped = parse_condition_rows(below_block.group("conditions"))
         blocks.append(
             {
                 "block_id": "cond_block_1",
@@ -37,7 +37,8 @@ def extract_condition_blocks(text: str) -> List[JsonDict]:
                 "logic_hint": below_block.group("logic").upper(),
                 "action_text": _normalize_spaces(below_block.group("action")),
                 "condition_text": "\n".join(condition_lines),
-                "condition_lines": [line for line in condition_lines if line not in LOGIC_MARKERS],
+                "condition_lines": condition_lines,
+                "logic_markers": logic_markers,
             }
         )
         return blocks
@@ -53,18 +54,33 @@ def extract_condition_blocks(text: str) -> List[JsonDict]:
 
 
 def split_condition_lines(condition_text: str) -> List[str]:
-    """Split a condition block into condition lines while keeping logic markers."""
+    """Split a condition block into condition lines without block-level logic markers."""
+
+    condition_lines, _logic_markers, _skipped_lines = parse_condition_rows(condition_text)
+    return condition_lines
+
+
+def parse_condition_rows(condition_text: str) -> tuple[List[str], List[str], List[JsonDict]]:
+    """Split condition text into condition lines, block-level logic markers, and skipped rows."""
 
     lines: List[str] = []
+    logic_markers: List[str] = []
+    skipped_lines: List[JsonDict] = []
     for raw_line in condition_text.splitlines():
         line = raw_line.strip().strip("-* ")
         if not line:
             continue
-        if line.upper() in LOGIC_MARKERS:
-            lines.append(line.upper())
+        marker = line.upper()
+        if marker in LOGIC_MARKERS:
+            logic_markers.append(marker)
             continue
-        lines.extend(_split_inline_logic_markers(line))
-    return [line for line in lines if line]
+        _trigger, condition = _strip_single_line_trigger(line)
+        invalid_marker = condition.upper()
+        if invalid_marker in INVALID_CONDITION_LINES:
+            skipped_lines.append({"line": condition, "reason": "invalid_condition_line"})
+            continue
+        lines.append(condition)
+    return ([line for line in lines if line], logic_markers, skipped_lines)
 
 
 def filter_condition_lines(lines: List[str]) -> tuple[List[str], List[JsonDict]]:
@@ -85,13 +101,16 @@ def _extract_inline_when_if_block(text: str) -> JsonDict | None:
     match = re.search(r"\b(?P<trigger>when|if)\b\s+(?P<condition>.+?)(?:,\s*|\s+EPS\s+shall\s+|\s+shall\s+)", text, re.I)
     if not match:
         return None
+    condition_lines, logic_markers, skipped_lines = parse_condition_rows(match.group("condition"))
     return {
         "block_id": "cond_block_1",
         "trigger": match.group("trigger").lower(),
         "logic_hint": None,
         "action_text": text[: match.start()].strip(),
-        "condition_text": match.group("condition").strip(),
-        "condition_lines": split_condition_lines(match.group("condition")),
+        "condition_text": "\n".join(condition_lines),
+        "condition_lines": condition_lines,
+        "logic_markers": logic_markers,
+        "skipped_lines": skipped_lines,
     }
 
 
@@ -106,18 +125,18 @@ def _extract_processed_condition_block(text: str) -> JsonDict | None:
 
     if len(raw_lines) == 1:
         trigger, condition = _strip_single_line_trigger(raw_lines[0])
-        lines, skipped = filter_condition_lines(split_condition_lines(condition))
-        return _build_processed_block(trigger, "ALL", lines, skipped)
+        lines, logic_markers, skipped = parse_condition_rows(condition)
+        return _build_processed_block(trigger, "ALL", lines, logic_markers, skipped)
 
     first_line = raw_lines[0]
     header = PROCESSED_HEADER_RE.match(first_line)
     if header:
         condition_source = "\n".join(raw_lines[1:])
-        lines, skipped = filter_condition_lines(split_condition_lines(condition_source))
-        return _build_processed_block(first_line, header.group("logic").upper(), lines, skipped)
+        lines, logic_markers, skipped = parse_condition_rows(condition_source)
+        return _build_processed_block(first_line, header.group("logic").upper(), lines, logic_markers, skipped)
 
-    lines, skipped = filter_condition_lines(split_condition_lines("\n".join(raw_lines)))
-    return _build_processed_block("", None, lines, skipped)
+    trigger, lines, logic_markers, skipped = _parse_processed_condition_lines(raw_lines)
+    return _build_processed_block(trigger, _first_logic_marker(logic_markers), lines, logic_markers, skipped)
 
 
 def _strip_single_line_trigger(line: str) -> tuple[str, str]:
@@ -127,10 +146,36 @@ def _strip_single_line_trigger(line: str) -> tuple[str, str]:
     return (_normalize_spaces(match.group("trigger")).lower(), match.group("condition").strip())
 
 
+def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[str], List[str], List[JsonDict]]:
+    trigger = ""
+    lines: List[str] = []
+    logic_markers: List[str] = []
+    skipped_lines: List[JsonDict] = []
+    for raw_line in raw_lines:
+        marker = raw_line.upper()
+        if marker in LOGIC_MARKERS:
+            logic_markers.append(marker)
+            continue
+        line_trigger, condition = _strip_single_line_trigger(raw_line)
+        if line_trigger and not trigger:
+            trigger = line_trigger
+        invalid_marker = condition.upper()
+        if invalid_marker in INVALID_CONDITION_LINES:
+            skipped_lines.append({"line": condition, "reason": "invalid_condition_line"})
+            continue
+        lines.append(condition)
+    return trigger, lines, logic_markers, skipped_lines
+
+
+def _first_logic_marker(logic_markers: List[str]) -> str | None:
+    return logic_markers[0] if logic_markers else None
+
+
 def _build_processed_block(
     trigger: str,
     logic_hint: str | None,
     condition_lines: List[str],
+    logic_markers: List[str],
     skipped_lines: List[JsonDict],
 ) -> JsonDict:
     return {
@@ -140,6 +185,7 @@ def _build_processed_block(
         "action_text": "",
         "condition_text": "\n".join(line for line in condition_lines if line.upper() not in LOGIC_MARKERS),
         "condition_lines": condition_lines,
+        "logic_markers": logic_markers,
         "skipped_lines": skipped_lines,
     }
 

@@ -21,8 +21,9 @@ DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
             "trigger": "if below ALL conditions are met",
             "logic_hint": "ALL",
             "action_text": "EPS shall transition from Normal state to Degraded state",
-            "condition_text": "S_VEHICLE_SPEED > 10kph\nAND\nDEM_COLUMN_TORQUE_IMPLAUSIBLE is Active",
+            "condition_text": "S_VEHICLE_SPEED > 10kph\nDEM_COLUMN_TORQUE_IMPLAUSIBLE is Active",
             "condition_lines": ["S_VEHICLE_SPEED > 10kph", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"],
+            "logic_markers": ["AND"],
         }
     ]
 
@@ -84,6 +85,7 @@ def test_extract_single_processed_condition_strips_trigger_keyword():
             "action_text": "",
             "condition_text": "S_VEHICLE_SPEED is less than 10kph",
             "condition_lines": ["S_VEHICLE_SPEED is less than 10kph"],
+            "logic_markers": [],
             "skipped_lines": [],
         }
     ]
@@ -106,6 +108,7 @@ DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
             "action_text": "",
             "condition_text": "S_VEHICLE_SPEED > 10kph\nDEM_COLUMN_TORQUE_IMPLAUSIBLE is Active",
             "condition_lines": ["S_VEHICLE_SPEED > 10kph", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"],
+            "logic_markers": [],
             "skipped_lines": [
                 {"line": "Normal Exit", "reason": "invalid_condition_line"},
                 {"line": "Fault Exit", "reason": "invalid_condition_line"},
@@ -121,8 +124,37 @@ DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
 
     block = extract_condition_blocks(text)[0]
 
-    assert block["logic_hint"] is None
-    assert block["condition_lines"] == ["S_VEHICLE_SPEED > 10kph", "OR", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"]
+    assert block["logic_hint"] == "OR"
+    assert block["logic_markers"] == ["OR"]
+    assert block["condition_lines"] == ["S_VEHICLE_SPEED > 10kph", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"]
+
+
+def test_extract_multiline_processed_conditions_strips_line_trigger_and_excludes_markers():
+    text = """When ABC is active
+AND
+column torque is greater than 5Nm"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "when"
+    assert block["logic_hint"] == "AND"
+    assert block["logic_markers"] == ["AND"]
+    assert block["condition_lines"] == ["ABC is active", "column torque is greater than 5Nm"]
+
+
+def test_extract_header_conditions_preserves_inline_child_logic_inside_condition_line():
+    text = """when any of below conditions are met:
+one of vehicle speed is invalid
+s_vehicle_speed1 is invalid or s_vehicle_speed2 is invalid"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["logic_hint"] == "ANY"
+    assert block["condition_lines"] == [
+        "one of vehicle speed is invalid",
+        "s_vehicle_speed1 is invalid or s_vehicle_speed2 is invalid",
+    ]
+    assert block["logic_markers"] == []
 
 
 def test_fusion_builder_parses_conditions_field_instead_of_raw_text():
