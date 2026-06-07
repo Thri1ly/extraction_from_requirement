@@ -13,6 +13,12 @@ TRIGGER_PREFIXES = [
     "when",
     "if",
 ]
+LIST_HEADER_TRIGGERS = [
+    "if/when",
+    "while",
+    "when",
+    "if",
+]
 CONDITION_HEADER_PREFIXES = [
     "under the following conditions",
     "under following conditions",
@@ -30,6 +36,11 @@ BELOW_CONDITIONS_RE = re.compile(
 )
 
 PROCESSED_HEADER_RE = re.compile(r"^(?P<trigger>(?:when|if)\b.*\b(?P<logic>ALL|ANY)\b.*?:?)$", flags=re.I)
+
+CONDITION_LIST_HEADER_RE = re.compile(
+    rf"^(?P<trigger>(?:{_prefix_pattern(LIST_HEADER_TRIGGERS)})\s+the\s+following\s+conditions?\s+(?:are|is)\s+(?:met|satisfied))\s*:?\s*$",
+    flags=re.IGNORECASE,
+)
 
 TRIGGER_PREFIX_RE = re.compile(
     rf"^(?P<trigger>{_prefix_pattern(TRIGGER_PREFIXES)})\b\s*:?\s*(?P<condition>.*)$",
@@ -61,6 +72,11 @@ def extract_condition_blocks(text: str) -> List[JsonDict]:
             }
         )
         return blocks
+
+    if "\n" in text:
+        processed = _extract_processed_condition_block(text)
+        if processed:
+            return [processed]
 
     inline = _extract_inline_when_if_block(text)
     if inline:
@@ -193,6 +209,9 @@ def _match_processed_header(line: str) -> JsonDict | None:
     logic_header = PROCESSED_HEADER_RE.match(line)
     if logic_header:
         return {"trigger": line, "logic_hint": logic_header.group("logic").upper()}
+    list_header = CONDITION_LIST_HEADER_RE.match(line)
+    if list_header:
+        return {"trigger": line, "logic_hint": None}
     configured_header = CONDITION_HEADER_PREFIX_RE.match(line)
     if configured_header:
         return {"trigger": line, "logic_hint": None}
@@ -200,7 +219,7 @@ def _match_processed_header(line: str) -> JsonDict | None:
 
 
 def _clean_condition_fragment(text: str) -> str:
-    cleaned = text.strip()
+    cleaned = text.strip().rstrip(",").strip()
     return "" if cleaned == ":" else cleaned
 
 

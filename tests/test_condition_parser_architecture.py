@@ -195,6 +195,36 @@ Condition2"""
     assert block["logic_markers"] == ["AND"]
 
 
+def test_extract_condition_list_header_patterns_are_not_condition_lines():
+    samples = [
+        "if/when the following conditions are met:",
+        "when the following condition is met:",
+        "while the following conditions are satisfied:",
+        "if the following condition is satisfied:",
+    ]
+
+    for header in samples:
+        block = extract_condition_blocks(f"{header}\nCONDITIONA\nAND\nCONDITIONB")[0]
+
+        assert block["trigger"] == header
+        assert block["logic_hint"] == "AND"
+        assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
+        assert block["logic_markers"] == ["AND"]
+
+
+def test_extract_multiline_conditions_prefers_processed_parser_over_inline_comma_cutoff():
+    text = """when A,
+AND
+B"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "when"
+    assert block["logic_hint"] == "AND"
+    assert block["condition_lines"] == ["A", "B"]
+    assert block["logic_markers"] == ["AND"]
+
+
 def test_fusion_builder_parses_conditions_field_instead_of_raw_text():
     from src.fusion_builder import build_enhanced_requirement
 
