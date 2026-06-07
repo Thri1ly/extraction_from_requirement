@@ -23,6 +23,10 @@ def _raw_text(requirement: JsonDict) -> str:
     return str(requirement.get("raw_text") or requirement.get("text") or requirement.get("requirement") or "")
 
 
+def _condition_text(requirement: JsonDict, fallback_text: str) -> str:
+    return str(requirement.get("conditions") or fallback_text)
+
+
 def build_enhanced_requirement(requirement: JsonDict) -> JsonDict:
     """Fuse raw fields and Layer3-6 outputs into one enhanced requirement."""
 
@@ -36,13 +40,18 @@ def build_enhanced_requirement(requirement: JsonDict) -> JsonDict:
     base.setdefault("component", "")
     base.setdefault("rule_entities", [])
     base.setdefault("ner_entities", [])
+    condition_text = _condition_text(base, text)
 
     normalized_entities = _safe_layer(
         "normalizer",
         lambda: normalize_entities(text, base.get("rule_entities"), base.get("ner_entities")),
         issues,
     )
-    parsed_conditions = _safe_layer("condition_parser", lambda: parse_conditions(text, normalized_entities), issues)
+    parsed_conditions = _safe_layer(
+        "condition_parser",
+        lambda: parse_conditions(condition_text, normalized_entities),
+        issues,
+    )
     parsed_actions = _safe_layer("action_parser", lambda: parse_actions(text, normalized_entities), issues)
     coreference = _safe_layer(
         "coreference_resolver",

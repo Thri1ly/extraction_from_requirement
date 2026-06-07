@@ -71,3 +71,74 @@ def test_parse_conditions_preserves_flat_conditions_for_existing_consumers():
     assert threshold["signal"] == "S_VEHICLE_SPEED"
     assert threshold["operator"] == "<"
     assert threshold["value"] == 10
+
+
+def test_extract_single_processed_condition_strips_trigger_keyword():
+    blocks = extract_condition_blocks("If S_VEHICLE_SPEED is less than 10kph")
+
+    assert blocks == [
+        {
+            "block_id": "cond_block_1",
+            "trigger": "if",
+            "logic_hint": "ALL",
+            "action_text": "",
+            "condition_text": "S_VEHICLE_SPEED is less than 10kph",
+            "condition_lines": ["S_VEHICLE_SPEED is less than 10kph"],
+            "skipped_lines": [],
+        }
+    ]
+
+
+def test_extract_multiline_processed_conditions_uses_header_logic():
+    text = """When ANY of the following conditions are met:
+Normal Exit
+S_VEHICLE_SPEED > 10kph
+Fault Exit
+DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
+
+    blocks = extract_condition_blocks(text)
+
+    assert blocks == [
+        {
+            "block_id": "cond_block_1",
+            "trigger": "When ANY of the following conditions are met:",
+            "logic_hint": "ANY",
+            "action_text": "",
+            "condition_text": "S_VEHICLE_SPEED > 10kph\nDEM_COLUMN_TORQUE_IMPLAUSIBLE is Active",
+            "condition_lines": ["S_VEHICLE_SPEED > 10kph", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"],
+            "skipped_lines": [
+                {"line": "Normal Exit", "reason": "invalid_condition_line"},
+                {"line": "Fault Exit", "reason": "invalid_condition_line"},
+            ],
+        }
+    ]
+
+
+def test_extract_multiline_processed_conditions_keeps_logic_markers_without_header_hint():
+    text = """S_VEHICLE_SPEED > 10kph
+OR
+DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["logic_hint"] is None
+    assert block["condition_lines"] == ["S_VEHICLE_SPEED > 10kph", "OR", "DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"]
+
+
+def test_fusion_builder_parses_conditions_field_instead_of_raw_text():
+    from src.fusion_builder import build_enhanced_requirement
+
+    req = build_enhanced_requirement(
+        {
+            "requirement_id": "REQ_COND_FIELD",
+            "raw_text": "EPS shall transition from Normal state to Degraded state.",
+            "conditions": "If S_VEHICLE_SPEED is less than 10kph",
+            "rule_entities": [],
+            "ner_entities": [],
+        }
+    )
+
+    threshold = by_type(req["parsed_conditions"], "threshold_condition")[0]
+    assert threshold["signal"] == "S_VEHICLE_SPEED"
+    assert threshold["operator"] == "<"
+    assert threshold["value"] == 10
