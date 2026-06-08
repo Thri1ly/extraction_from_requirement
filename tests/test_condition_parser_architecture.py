@@ -28,6 +28,41 @@ DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
     ]
 
 
+def test_extract_condition_block_uses_configurable_raw_logic_header():
+    text = """EPS shall notify driver when following ANY condition is satisfied:
+ConditionA
+OR
+ConditionB"""
+
+    blocks = extract_condition_blocks(text)
+
+    assert blocks == [
+        {
+            "block_id": "cond_block_1",
+            "trigger": "when following ANY condition is satisfied",
+            "logic_hint": "ANY",
+            "action_text": "EPS shall notify driver",
+            "condition_text": "ConditionA\nConditionB",
+            "condition_lines": ["ConditionA", "ConditionB"],
+            "logic_markers": ["OR"],
+        }
+    ]
+
+
+def test_extract_pure_condition_header_before_raw_requirement_compatibility():
+    text = """when the following conditions:
+ConditionA
+AND
+ConditionB"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "when the following conditions:"
+    assert block["logic_hint"] == "AND"
+    assert block["condition_lines"] == ["ConditionA", "ConditionB"]
+    assert block["logic_markers"] == ["AND"]
+
+
 def test_parse_condition_logic_uses_explicit_and_marker():
     block = {
         "block_id": "cond_block_1",
@@ -115,6 +150,18 @@ DEM_COLUMN_TORQUE_IMPLAUSIBLE is Active"""
             ],
         }
     ]
+
+
+def test_extract_processed_header_uses_configurable_logic_header():
+    text = """while ALL below conditions are fulfilled:
+ConditionA
+ConditionB"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "while ALL below conditions are fulfilled:"
+    assert block["logic_hint"] == "ALL"
+    assert block["condition_lines"] == ["ConditionA", "ConditionB"]
 
 
 def test_extract_multiline_processed_conditions_keeps_logic_markers_without_header_hint():
@@ -205,6 +252,9 @@ def test_extract_condition_list_header_patterns_are_not_condition_lines():
         "if following condition is satisfied:",
         "when/if below conditions are fullfilled:",
         "when following conditions are fulfilled:",
+        "when the below conditions are met:",
+        "when the below conditions is met:",
+        "when the below condition is satiafied:",
     ]
 
     for header in samples:
@@ -214,6 +264,20 @@ def test_extract_condition_list_header_patterns_are_not_condition_lines():
         assert block["logic_hint"] == "AND"
         assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
         assert block["logic_markers"] == ["AND"]
+
+
+def test_extract_condition_list_header_one_of_sets_any_logic_hint():
+    text = """if one of following conditions is fulfilled:
+ConditionA
+AND
+ConditionB"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["trigger"] == "if one of following conditions is fulfilled:"
+    assert block["logic_hint"] == "ANY"
+    assert block["condition_lines"] == ["ConditionA", "ConditionB"]
+    assert block["logic_markers"] == ["AND"]
 
 
 def test_extract_multiline_conditions_prefers_processed_parser_over_inline_comma_cutoff():

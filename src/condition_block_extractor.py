@@ -22,8 +22,12 @@ LIST_HEADER_TRIGGERS = [
 ]
 LIST_HEADER_SCOPES = [
     "the following",
+    "the below",
     "following",
     "below",
+]
+LIST_HEADER_QUANTIFIERS = [
+    "one of",
 ]
 LIST_HEADER_OBJECTS = [
     "conditions",
@@ -31,9 +35,38 @@ LIST_HEADER_OBJECTS = [
 ]
 LIST_HEADER_STATES = [
     "satisfied",
+    "satiafied",
     "fulfilled",
     "fullfilled",
     "met",
+]
+LOGIC_HEADER_TRIGGERS = [
+    "if/when",
+    "when/if",
+    "while",
+    "when",
+    "if",
+]
+LOGIC_HEADER_SCOPES = [
+    "the following",
+    "the below",
+    "following",
+    "below",
+]
+LOGIC_HEADER_OBJECTS = [
+    "conditions",
+    "condition",
+]
+LOGIC_HEADER_STATES = [
+    "satisfied",
+    "satiafied",
+    "fulfilled",
+    "fullfilled",
+    "met",
+]
+LOGIC_HEADER_VALUES = [
+    "ALL",
+    "ANY",
 ]
 CONDITION_HEADER_PREFIXES = [
     "under the following conditions",
@@ -47,18 +80,34 @@ def _prefix_pattern(prefixes: List[str]) -> str:
 
 
 BELOW_CONDITIONS_RE = re.compile(
-    r"(?P<action>.*?)\s+(?P<trigger>if\s+below\s+(?P<logic>ALL|ANY)\s+conditions\s+are\s+met)\s*:\s*(?P<conditions>.+)",
+    rf"(?P<action>.*?)\s+"
+    rf"(?P<trigger>(?:{_prefix_pattern(LOGIC_HEADER_TRIGGERS)})\s+"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_SCOPES)})\s+"
+    rf"(?P<logic>{_prefix_pattern(LOGIC_HEADER_VALUES)})\s+"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_OBJECTS)})\s+"
+    rf"(?:are|is)\s+"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*(?P<conditions>.+)",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
-PROCESSED_HEADER_RE = re.compile(r"^(?P<trigger>(?:when|if)\b.*\b(?P<logic>ALL|ANY)\b.*?:?)$", flags=re.I)
+PROCESSED_HEADER_RE = re.compile(
+    rf"^(?P<trigger>(?:{_prefix_pattern(LOGIC_HEADER_TRIGGERS)})\s+"
+    rf"(?P<logic>{_prefix_pattern(LOGIC_HEADER_VALUES)})\s+"
+    rf"(?:of\s+)?"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_SCOPES)})\s+"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_OBJECTS)})\s+"
+    rf"(?:are|is)\s+"
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*$",
+    flags=re.IGNORECASE,
+)
 
 CONDITION_LIST_HEADER_RE = re.compile(
     rf"^(?P<trigger>(?:{_prefix_pattern(LIST_HEADER_TRIGGERS)})\s+"
+    rf"(?:(?P<quantifier>{_prefix_pattern(LIST_HEADER_QUANTIFIERS)})\s+)?"
     rf"(?:{_prefix_pattern(LIST_HEADER_SCOPES)})\s+"
-    rf"(?:{_prefix_pattern(LIST_HEADER_OBJECTS)})\s+"
-    rf"(?:are|is)\s+"
-    rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))\s*:?\s*$",
+    rf"(?:{_prefix_pattern(LIST_HEADER_OBJECTS)})"
+    rf"(?:\s+(?:are|is)\s+"
+    rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))?)\s*:?\s*$",
     flags=re.IGNORECASE,
 )
 
@@ -275,7 +324,8 @@ def _match_processed_header(line: str) -> JsonDict | None:
         return {"trigger": line, "logic_hint": logic_header.group("logic").upper()}
     list_header = CONDITION_LIST_HEADER_RE.match(line)
     if list_header:
-        return {"trigger": line, "logic_hint": None}
+        logic_hint = "ANY" if list_header.groupdict().get("quantifier") else None
+        return {"trigger": line, "logic_hint": logic_hint}
     configured_header = CONDITION_HEADER_PREFIX_RE.match(line)
     if configured_header:
         return {"trigger": line, "logic_hint": None}
