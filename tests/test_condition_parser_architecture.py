@@ -319,6 +319,28 @@ condition2"""
     ]
 
 
+def test_extract_nested_condition_header_uses_configured_lists():
+    text = """when conditionA
+AND all of the below condition is fulfilled:
+condition1
+condition2"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["logic_markers"] == ["AND"]
+    assert block["nested_condition_blocks"] == [
+        {
+            "block_id": "cond_block_1_nested_1",
+            "trigger": "all of the below condition is fulfilled:",
+            "logic_hint": "ALL",
+            "condition_text": "condition1\ncondition2",
+            "condition_lines": ["condition1", "condition2"],
+            "logic_markers": [],
+            "skipped_lines": [],
+        }
+    ]
+
+
 def test_parse_condition_logic_outputs_nested_condition_group():
     block = extract_condition_blocks(
         """when conditionA

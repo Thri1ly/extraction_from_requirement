@@ -68,6 +68,27 @@ LOGIC_HEADER_VALUES = [
     "ALL",
     "ANY",
 ]
+NESTED_HEADER_SCOPES = [
+    "the following",
+    "the below",
+    "following",
+    "below",
+]
+NESTED_HEADER_OBJECTS = [
+    "conditions",
+    "condition",
+]
+NESTED_HEADER_STATES = [
+    "satisfied",
+    "satiafied",
+    "fulfilled",
+    "fullfilled",
+    "met",
+]
+NESTED_HEADER_VALUES = [
+    "ALL",
+    "ANY",
+]
 CONDITION_HEADER_PREFIXES = [
     "under the following conditions",
     "under following conditions",
@@ -112,7 +133,11 @@ CONDITION_LIST_HEADER_RE = re.compile(
 )
 
 NESTED_CONDITION_HEADER_RE = re.compile(
-    r"^(?P<logic>ANY|ALL)\s+of\s+(?:below|the\s+following|following)\s+conditions?\s+(?:are|is)\s+(?:met|satisfied)\s*:?\s*$",
+    rf"^(?P<logic>{_prefix_pattern(NESTED_HEADER_VALUES)})\s+of\s+"
+    rf"(?:{_prefix_pattern(NESTED_HEADER_SCOPES)})\s+"
+    rf"(?:{_prefix_pattern(NESTED_HEADER_OBJECTS)})\s+"
+    rf"(?:are|is)\s+"
+    rf"(?:{_prefix_pattern(NESTED_HEADER_STATES)})\s*:?\s*$",
     flags=re.IGNORECASE,
 )
 
