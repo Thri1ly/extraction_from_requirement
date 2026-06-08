@@ -15,9 +15,25 @@ TRIGGER_PREFIXES = [
 ]
 LIST_HEADER_TRIGGERS = [
     "if/when",
+    "when/if",
     "while",
     "when",
     "if",
+]
+LIST_HEADER_SCOPES = [
+    "the following",
+    "following",
+    "below",
+]
+LIST_HEADER_OBJECTS = [
+    "conditions",
+    "condition",
+]
+LIST_HEADER_STATES = [
+    "satisfied",
+    "fulfilled",
+    "fullfilled",
+    "met",
 ]
 CONDITION_HEADER_PREFIXES = [
     "under the following conditions",
@@ -38,7 +54,11 @@ BELOW_CONDITIONS_RE = re.compile(
 PROCESSED_HEADER_RE = re.compile(r"^(?P<trigger>(?:when|if)\b.*\b(?P<logic>ALL|ANY)\b.*?:?)$", flags=re.I)
 
 CONDITION_LIST_HEADER_RE = re.compile(
-    rf"^(?P<trigger>(?:{_prefix_pattern(LIST_HEADER_TRIGGERS)})\s+the\s+following\s+conditions?\s+(?:are|is)\s+(?:met|satisfied))\s*:?\s*$",
+    rf"^(?P<trigger>(?:{_prefix_pattern(LIST_HEADER_TRIGGERS)})\s+"
+    rf"(?:{_prefix_pattern(LIST_HEADER_SCOPES)})\s+"
+    rf"(?:{_prefix_pattern(LIST_HEADER_OBJECTS)})\s+"
+    rf"(?:are|is)\s+"
+    rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))\s*:?\s*$",
     flags=re.IGNORECASE,
 )
 

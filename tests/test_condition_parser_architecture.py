@@ -201,6 +201,10 @@ def test_extract_condition_list_header_patterns_are_not_condition_lines():
         "when the following condition is met:",
         "while the following conditions are satisfied:",
         "if the following condition is satisfied:",
+        "when below conditions are met:",
+        "if following condition is satisfied:",
+        "when/if below conditions are fullfilled:",
+        "when following conditions are fulfilled:",
     ]
 
     for header in samples:
