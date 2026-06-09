@@ -284,6 +284,22 @@ def test_extract_condition_list_header_quantifier_sets_logic_hint():
         assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
 
 
+def test_extract_condition_headers_accept_period_terminator():
+    samples = [
+        ("when any of error conditions are met.", "ANY"),
+        ("if the following conditions are satisfied.", "AND"),
+        ("under following conditions.", "AND"),
+    ]
+
+    for header, expected_logic in samples:
+        block = extract_condition_blocks(f"{header}\nCONDITIONA\nAND\nCONDITIONB")[0]
+
+        assert block["trigger"] == header
+        assert block["logic_hint"] == expected_logic
+        assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
+        assert block["logic_markers"] == ["AND"]
+
+
 def test_extract_condition_list_header_one_of_sets_any_logic_hint():
     text = """if one of following conditions is fulfilled:
 ConditionA
@@ -369,6 +385,19 @@ condition2"""
 
     assert block["nested_condition_blocks"][0]["trigger"] == "any of error conditions are met:"
     assert block["nested_condition_blocks"][0]["logic_hint"] == "ANY"
+    assert block["nested_condition_blocks"][0]["condition_lines"] == ["condition1", "condition2"]
+
+
+def test_extract_nested_condition_header_without_quantifier_defaults_to_parent_logic():
+    text = """conditionA
+AND below conditions are met.
+condition1
+condition2"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["nested_condition_blocks"][0]["trigger"] == "below conditions are met."
+    assert block["nested_condition_blocks"][0]["logic_hint"] is None
     assert block["nested_condition_blocks"][0]["condition_lines"] == ["condition1", "condition2"]
 
 

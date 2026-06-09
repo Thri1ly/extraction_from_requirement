@@ -86,6 +86,7 @@ CONDITION_HEADER_PREFIXES = [
     "under the following conditions",
     "under following conditions",
 ]
+HEADER_END_RE = r"[:.]?"
 
 
 def _prefix_pattern(prefixes: List[str]) -> str:
@@ -100,7 +101,7 @@ BELOW_CONDITIONS_RE = re.compile(
     rf"(?P<logic>{_prefix_pattern(LOGIC_HEADER_VALUES)})\s+"
     rf".*?\bconditions?\s+"
     rf"(?:are|is)\s+"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*(?P<conditions>.+)",
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*{HEADER_END_RE}\s*(?P<conditions>.+)",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
@@ -110,7 +111,7 @@ PROCESSED_HEADER_RE = re.compile(
     rf"(?:of\s+)?"
     rf".*?\bconditions?\s+"
     rf"(?:are|is)\s+"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*$",
+    rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*{HEADER_END_RE}\s*$",
     flags=re.IGNORECASE,
 )
 
@@ -119,27 +120,27 @@ CONDITION_LIST_HEADER_RE = re.compile(
     rf"(?:(?P<quantifier>{_prefix_pattern(LIST_HEADER_QUANTIFIERS)})\s+)?"
     rf".*?\bconditions?"
     rf"(?:\s+(?:are|is)\s+"
-    rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))?)\s*:?\s*$",
+    rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))?)\s*{HEADER_END_RE}\s*$",
     flags=re.IGNORECASE,
 )
 
 NESTED_CONDITION_HEADER_RE = re.compile(
-    rf"^(?P<logic>{_prefix_pattern(NESTED_HEADER_VALUES)})\s+"
+    rf"^(?:(?P<logic>{_prefix_pattern(NESTED_HEADER_VALUES)})\s+)?"
     rf"(?:of\s+)?"
     rf"(?:{_prefix_pattern(NESTED_HEADER_SCOPES)}|.*?)\s+"
     rf"(?:{_prefix_pattern(NESTED_HEADER_OBJECTS)})\s+"
     rf"(?:are|is)\s+"
-    rf"(?:{_prefix_pattern(NESTED_HEADER_STATES)})\s*:?\s*$",
+    rf"(?:{_prefix_pattern(NESTED_HEADER_STATES)})\s*{HEADER_END_RE}\s*$",
     flags=re.IGNORECASE,
 )
 
 TRIGGER_PREFIX_RE = re.compile(
-    rf"^(?P<trigger>{_prefix_pattern(TRIGGER_PREFIXES)})\b\s*:?\s*(?P<condition>.*)$",
+    rf"^(?P<trigger>{_prefix_pattern(TRIGGER_PREFIXES)})\b\s*{HEADER_END_RE}\s*(?P<condition>.*)$",
     flags=re.IGNORECASE,
 )
 
 CONDITION_HEADER_PREFIX_RE = re.compile(
-    rf"^(?P<trigger>{_prefix_pattern(CONDITION_HEADER_PREFIXES)})\b\s*:?\s*$",
+    rf"^(?P<trigger>{_prefix_pattern(CONDITION_HEADER_PREFIXES)})\b\s*{HEADER_END_RE}\s*$",
     flags=re.IGNORECASE,
 )
 
@@ -391,7 +392,8 @@ def _match_nested_condition_header(line: str) -> JsonDict | None:
     match = NESTED_CONDITION_HEADER_RE.match(line)
     if not match:
         return None
-    return {"logic_hint": match.group("logic").upper()}
+    logic = match.group("logic")
+    return {"logic_hint": logic.upper() if logic else None}
 
 
 def _match_processed_header(line: str) -> JsonDict | None:
