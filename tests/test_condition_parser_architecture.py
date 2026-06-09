@@ -255,6 +255,8 @@ def test_extract_condition_list_header_patterns_are_not_condition_lines():
         "when the below conditions are met:",
         "when the below conditions is met:",
         "when the below condition is satiafied:",
+        "in case of error conditions are fulfilled:",
+        "while blow condition is satisfied:",
     ]
 
     for header in samples:
@@ -264,6 +266,22 @@ def test_extract_condition_list_header_patterns_are_not_condition_lines():
         assert block["logic_hint"] == "AND"
         assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
         assert block["logic_markers"] == ["AND"]
+
+
+def test_extract_condition_list_header_quantifier_sets_logic_hint():
+    samples = [
+        ("if any of error conditions are met:", "ANY"),
+        ("when all error condition is fulfilled:", "ALL"),
+        ("in case of any blow conditions are satisfied:", "ANY"),
+        ("while all of the following conditions are met:", "ALL"),
+    ]
+
+    for header, expected_logic in samples:
+        block = extract_condition_blocks(f"{header}\nCONDITIONA\nCONDITIONB")[0]
+
+        assert block["trigger"] == header
+        assert block["logic_hint"] == expected_logic
+        assert block["condition_lines"] == ["CONDITIONA", "CONDITIONB"]
 
 
 def test_extract_condition_list_header_one_of_sets_any_logic_hint():
@@ -339,6 +357,62 @@ condition2"""
             "skipped_lines": [],
         }
     ]
+
+
+def test_extract_nested_condition_header_allows_free_descriptor():
+    text = """conditionA
+AND any of error conditions are met:
+condition1
+condition2"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["nested_condition_blocks"][0]["trigger"] == "any of error conditions are met:"
+    assert block["nested_condition_blocks"][0]["logic_hint"] == "ANY"
+    assert block["nested_condition_blocks"][0]["condition_lines"] == ["condition1", "condition2"]
+
+
+def test_extract_bracketed_multiline_logic_group_as_nested_condition_block():
+    text = """condition1
+AND
+(condition2
+OR
+condition3)"""
+
+    block = extract_condition_blocks(text)[0]
+
+    assert block["logic_hint"] == "AND"
+    assert block["condition_lines"] == ["condition1"]
+    assert block["logic_markers"] == ["AND"]
+    assert block["nested_condition_blocks"] == [
+        {
+            "block_id": "cond_block_1_nested_1",
+            "trigger": "bracketed_group",
+            "logic_hint": "OR",
+            "condition_text": "condition2\ncondition3",
+            "condition_lines": ["condition2", "condition3"],
+            "logic_markers": ["OR"],
+            "skipped_lines": [],
+            "source_wrapper": "()",
+        }
+    ]
+
+
+def test_extract_square_and_curly_bracketed_multiline_logic_groups():
+    square = extract_condition_blocks("condition1\nAND\n[condition2\nOR\ncondition3]")[0]
+    curly = extract_condition_blocks("condition1\nAND\n{condition2\nAND\ncondition3}")[0]
+
+    assert square["nested_condition_blocks"][0]["source_wrapper"] == "[]"
+    assert square["nested_condition_blocks"][0]["logic_hint"] == "OR"
+    assert curly["nested_condition_blocks"][0]["source_wrapper"] == "{}"
+    assert curly["nested_condition_blocks"][0]["logic_hint"] == "AND"
+
+
+def test_extract_does_not_treat_single_line_parentheses_as_nested_condition_block():
+    block = extract_condition_blocks("when (condition1 AND condition2)")[0]
+
+    assert "nested_condition_blocks" not in block
+    assert block["condition_lines"] == ["(condition1 AND condition2)"]
 
 
 def test_parse_condition_logic_outputs_nested_condition_group():

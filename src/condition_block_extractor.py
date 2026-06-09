@@ -10,28 +10,24 @@ TRIGGER_PREFIXES = [
     "in case of",
     "during",
     "after",
+    "while",
     "when",
     "if",
 ]
 LIST_HEADER_TRIGGERS = [
+    "in case of",
     "if/when",
     "when/if",
     "while",
     "when",
     "if",
 ]
-LIST_HEADER_SCOPES = [
-    "the following",
-    "the below",
-    "following",
-    "below",
-]
 LIST_HEADER_QUANTIFIERS = [
     "one of",
-]
-LIST_HEADER_OBJECTS = [
-    "conditions",
-    "condition",
+    "any of",
+    "all of",
+    "any",
+    "all",
 ]
 LIST_HEADER_STATES = [
     "satisfied",
@@ -41,21 +37,12 @@ LIST_HEADER_STATES = [
     "met",
 ]
 LOGIC_HEADER_TRIGGERS = [
+    "in case of",
     "if/when",
     "when/if",
     "while",
     "when",
     "if",
-]
-LOGIC_HEADER_SCOPES = [
-    "the following",
-    "the below",
-    "following",
-    "below",
-]
-LOGIC_HEADER_OBJECTS = [
-    "conditions",
-    "condition",
 ]
 LOGIC_HEADER_STATES = [
     "satisfied",
@@ -73,6 +60,12 @@ NESTED_HEADER_SCOPES = [
     "the below",
     "following",
     "below",
+]
+NESTED_HEADER_QUANTIFIERS = [
+    "any of",
+    "all of",
+    "any",
+    "all",
 ]
 NESTED_HEADER_OBJECTS = [
     "conditions",
@@ -103,9 +96,9 @@ def _prefix_pattern(prefixes: List[str]) -> str:
 BELOW_CONDITIONS_RE = re.compile(
     rf"(?P<action>.*?)\s+"
     rf"(?P<trigger>(?:{_prefix_pattern(LOGIC_HEADER_TRIGGERS)})\s+"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_SCOPES)})\s+"
+    rf"(?:.*?\s+)?"
     rf"(?P<logic>{_prefix_pattern(LOGIC_HEADER_VALUES)})\s+"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_OBJECTS)})\s+"
+    rf".*?\bconditions?\s+"
     rf"(?:are|is)\s+"
     rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*(?P<conditions>.+)",
     flags=re.IGNORECASE | re.DOTALL,
@@ -115,8 +108,7 @@ PROCESSED_HEADER_RE = re.compile(
     rf"^(?P<trigger>(?:{_prefix_pattern(LOGIC_HEADER_TRIGGERS)})\s+"
     rf"(?P<logic>{_prefix_pattern(LOGIC_HEADER_VALUES)})\s+"
     rf"(?:of\s+)?"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_SCOPES)})\s+"
-    rf"(?:{_prefix_pattern(LOGIC_HEADER_OBJECTS)})\s+"
+    rf".*?\bconditions?\s+"
     rf"(?:are|is)\s+"
     rf"(?:{_prefix_pattern(LOGIC_HEADER_STATES)}))\s*:?\s*$",
     flags=re.IGNORECASE,
@@ -125,16 +117,16 @@ PROCESSED_HEADER_RE = re.compile(
 CONDITION_LIST_HEADER_RE = re.compile(
     rf"^(?P<trigger>(?:{_prefix_pattern(LIST_HEADER_TRIGGERS)})\s+"
     rf"(?:(?P<quantifier>{_prefix_pattern(LIST_HEADER_QUANTIFIERS)})\s+)?"
-    rf"(?:{_prefix_pattern(LIST_HEADER_SCOPES)})\s+"
-    rf"(?:{_prefix_pattern(LIST_HEADER_OBJECTS)})"
+    rf".*?\bconditions?"
     rf"(?:\s+(?:are|is)\s+"
     rf"(?:{_prefix_pattern(LIST_HEADER_STATES)}))?)\s*:?\s*$",
     flags=re.IGNORECASE,
 )
 
 NESTED_CONDITION_HEADER_RE = re.compile(
-    rf"^(?P<logic>{_prefix_pattern(NESTED_HEADER_VALUES)})\s+of\s+"
-    rf"(?:{_prefix_pattern(NESTED_HEADER_SCOPES)})\s+"
+    rf"^(?P<logic>{_prefix_pattern(NESTED_HEADER_VALUES)})\s+"
+    rf"(?:of\s+)?"
+    rf"(?:{_prefix_pattern(NESTED_HEADER_SCOPES)}|.*?)\s+"
     rf"(?:{_prefix_pattern(NESTED_HEADER_OBJECTS)})\s+"
     rf"(?:are|is)\s+"
     rf"(?:{_prefix_pattern(NESTED_HEADER_STATES)})\s*:?\s*$",
@@ -313,6 +305,11 @@ def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[st
                 }
             )
             break
+        bracket_block, next_index = _extract_bracketed_nested_block(raw_lines, index)
+        if bracket_block:
+            nested_blocks.append({**bracket_block, "block_id": f"cond_block_1_nested_{len(nested_blocks) + 1}"})
+            index = next_index
+            continue
         line_trigger, condition = _strip_single_line_trigger(line)
         if line_trigger and not trigger:
             trigger = line_trigger
@@ -327,6 +324,60 @@ def _parse_processed_condition_lines(raw_lines: List[str]) -> tuple[str, List[st
         lines.append(condition)
         index += 1
     return trigger, lines, logic_markers, skipped_lines, nested_blocks
+
+
+def _extract_bracketed_nested_block(raw_lines: List[str], start_index: int) -> tuple[JsonDict | None, int]:
+    opener_line = raw_lines[start_index].strip()
+    if not opener_line:
+        return None, start_index
+
+    wrappers = {"(": ")", "[": "]", "{": "}"}
+    opener = opener_line[0]
+    closer = wrappers.get(opener)
+    if not closer:
+        return None, start_index
+
+    collected: List[str] = []
+    first_content = opener_line[1:].strip()
+    if first_content:
+        collected.append(first_content)
+
+    index = start_index
+    found_close = False
+    while index + 1 < len(raw_lines):
+        index += 1
+        current = raw_lines[index].strip()
+        if current.endswith(closer):
+            before_close = current[: -len(closer)].strip()
+            if before_close:
+                collected.append(before_close)
+            found_close = True
+            break
+        collected.append(current)
+
+    if not found_close:
+        return None, start_index
+
+    inner_text = "\n".join(collected)
+    if "\n" not in inner_text:
+        return None, start_index
+
+    condition_lines, logic_markers, skipped_lines = parse_condition_rows(inner_text)
+    if not logic_markers or len(condition_lines) < 2:
+        return None, start_index
+
+    return (
+        {
+            "trigger": "bracketed_group",
+            "logic_hint": _first_logic_marker(logic_markers),
+            "condition_text": "\n".join(condition_lines),
+            "condition_lines": condition_lines,
+            "logic_markers": logic_markers,
+            "skipped_lines": skipped_lines,
+            "source_wrapper": opener + closer,
+        },
+        index + 1,
+    )
 
 
 def _split_leading_logic_marker(line: str) -> tuple[str | None, str]:
@@ -349,7 +400,7 @@ def _match_processed_header(line: str) -> JsonDict | None:
         return {"trigger": line, "logic_hint": logic_header.group("logic").upper()}
     list_header = CONDITION_LIST_HEADER_RE.match(line)
     if list_header:
-        logic_hint = "ANY" if list_header.groupdict().get("quantifier") else None
+        logic_hint = _logic_hint_for_quantifier(list_header.groupdict().get("quantifier"))
         return {"trigger": line, "logic_hint": logic_hint}
     configured_header = CONDITION_HEADER_PREFIX_RE.match(line)
     if configured_header:
@@ -360,6 +411,17 @@ def _match_processed_header(line: str) -> JsonDict | None:
 def _clean_condition_fragment(text: str) -> str:
     cleaned = text.strip().rstrip(",").strip()
     return "" if cleaned == ":" else cleaned
+
+
+def _logic_hint_for_quantifier(quantifier: str | None) -> str | None:
+    if not quantifier:
+        return None
+    normalized = quantifier.lower()
+    if "any" in normalized or "one" in normalized:
+        return "ANY"
+    if "all" in normalized:
+        return "ALL"
+    return None
 
 
 def _first_logic_marker(logic_markers: List[str]) -> str | None:
