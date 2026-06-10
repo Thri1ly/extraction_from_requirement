@@ -38,7 +38,9 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
 
     normalized_entities = normalized_entities or []
     conditions: List[JsonDict] = []
-    conditions.extend(parse_bracketed_definition_conditions(text, normalized_entities))
+    bracketed_definitions = parse_bracketed_definition_conditions(text, normalized_entities)
+    if bracketed_definitions:
+        return bracketed_definitions
     conditions.extend(parse_state_definition_conditions(text))
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))

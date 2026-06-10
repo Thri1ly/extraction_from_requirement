@@ -1,7 +1,7 @@
 from src.parser.condition_block_extractor import extract_condition_blocks
 from src.parser.condition_logic_parser import parse_condition_logic
 from src.parser.condition_parser import parse_conditions
-from src.parser.atomic_condition_parser import parse_condition_line
+from src.parser.atomic_condition_parser import parse_atomic_conditions, parse_condition_line
 
 
 def by_type(items, condition_type):
@@ -109,6 +109,60 @@ def test_parse_multi_signal_shared_zero_value_condition():
         ],
         "need_review": False,
     }
+
+
+def test_parse_bracketed_definition_does_not_expand_unclear_outer_signals_to_zero():
+    conditions = parse_atomic_conditions(
+        "no input torque and no column movement condition ({Column Torque} and {Column Velocity} are equal to zero)",
+        normalized_entities=[
+            {
+                "mention": "input torque",
+                "type": "SIGNAL",
+                "canonical_name": "S_INPUT_TORQUE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "column movement condition",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_MOVEMENT_CONDITION",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Column Torque",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_TORQUE",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "Column Velocity",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_VELOCITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "==",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "zero",
+                "type": "VALUE",
+                "canonical_name": "0",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert len(conditions) == 1
+    definition_children = conditions[0]["definition"]["children"]
+    assert [child["signal"] for child in definition_children] == ["S_COLUMN_TORQUE", "S_COLUMN_VELOCITY"]
 
 
 def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_state():
