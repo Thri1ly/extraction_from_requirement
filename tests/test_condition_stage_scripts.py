@@ -20,6 +20,7 @@ def test_condition_stage_scripts_write_chainable_jsonl_and_review_md(tmp_path):
     block_md = tmp_path / "condition_blocks.md"
     logic_jsonl = tmp_path / "condition_groups.jsonl"
     logic_md = tmp_path / "condition_groups.md"
+    logic_lines_jsonl = tmp_path / "condition_lines.jsonl"
     parsed_jsonl = tmp_path / "parsed_conditions.jsonl"
     parsed_md = tmp_path / "parsed_conditions.md"
     atomic_jsonl = tmp_path / "atomic_conditions.jsonl"
@@ -36,7 +37,7 @@ def test_condition_stage_scripts_write_chainable_jsonl_and_review_md(tmp_path):
     )
 
     block_rows = run_condition_block_extractor(source, block_jsonl, block_md)
-    logic_rows = run_condition_logic_parser(block_jsonl, logic_jsonl, logic_md)
+    logic_rows = run_condition_logic_parser(block_jsonl, logic_jsonl, logic_md, logic_lines_jsonl)
     parsed_rows = run_condition_parser_stage(logic_jsonl, parsed_jsonl, parsed_md)
     atomic_rows = run_atomic_condition_parser(logic_jsonl, atomic_jsonl, atomic_md)
 
@@ -48,6 +49,10 @@ def test_condition_stage_scripts_write_chainable_jsonl_and_review_md(tmp_path):
 
     assert read_jsonl(block_jsonl)[0]["condition_blocks"]
     assert read_jsonl(logic_jsonl)[0]["condition_groups"]
+    assert read_jsonl(logic_lines_jsonl) == [
+        {"condition line": "S_VEHICLE_SPEED > 10kph"},
+        {"condition line": "DEM_X is Active"},
+    ]
     assert read_jsonl(parsed_jsonl)[0]["parsed_conditions"]
     assert read_jsonl(atomic_jsonl)[0]["atomic_conditions"]
 
