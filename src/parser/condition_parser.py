@@ -1,6 +1,6 @@
 from typing import List
 
-from src.atomic_condition_parser import (
+from src.parser.atomic_condition_parser import (
     parse_atomic_conditions,
     parse_condition_line,
     parse_fault_state_conditions,
@@ -9,9 +9,9 @@ from src.atomic_condition_parser import (
     parse_state_definition_conditions,
     parse_threshold_conditions,
 )
-from src.condition_block_extractor import extract_condition_blocks
-from src.condition_logic_parser import parse_condition_logic
-from src.dependency_parser import parse_dependencies, parse_trend_dependencies
+from src.parser.condition_block_extractor import extract_condition_blocks
+from src.parser.condition_logic_parser import parse_condition_logic
+from src.parser.dependency_parser import parse_dependencies, parse_trend_dependencies
 from src.schemas import JsonDict, unique_dicts
 
 

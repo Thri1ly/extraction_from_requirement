@@ -1,10 +1,49 @@
-from src.condition_block_extractor import extract_condition_blocks
-from src.condition_logic_parser import parse_condition_logic
-from src.condition_parser import parse_conditions
+from src.parser.condition_block_extractor import extract_condition_blocks
+from src.parser.condition_logic_parser import parse_condition_logic
+from src.parser.condition_parser import parse_conditions
+from src.parser.atomic_condition_parser import parse_condition_line
 
 
 def by_type(items, condition_type):
     return [item for item in items if item["type"] == condition_type]
+
+
+def test_parse_signal_state_condition_from_normalized_entities():
+    parsed = parse_condition_line(
+        'S_COLUMN_TORQUE_QF is equal to "FULL"',
+        normalized_entities=[
+            {
+                "mention": "S_COLUMN_TORQUE_QF",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_TORQUE_QF",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "EQUAL TO",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "FULL",
+                "type": "STATE",
+                "canonical_name": "FULL",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": 'S_COLUMN_TORQUE_QF is equal to "FULL"',
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "FULL",
+        "need_review": False,
+    }
 
 
 def test_extract_condition_block_for_below_all_conditions():

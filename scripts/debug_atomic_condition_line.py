@@ -8,7 +8,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.condition_review_utils import write_jsonl
-from src.atomic_condition_parser import parse_condition_line
+from src.parser.atomic_condition_parser import parse_condition_line
 from src.entity_dictionary_builder import load_jsonl
 from src.normalizer import normalize_entities
 from src.schemas import JsonDict

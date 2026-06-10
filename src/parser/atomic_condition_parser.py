@@ -33,12 +33,13 @@ VALUE_UNIT_PATTERN = r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm)"
 def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | None = None) -> List[JsonDict]:
     """Parse all supported atomic condition forms from text."""
 
-    del normalized_entities
+    normalized_entities = normalized_entities or []
     conditions: List[JsonDict] = []
     conditions.extend(parse_state_definition_conditions(text))
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
+    conditions.extend(parse_signal_state_conditions(text, normalized_entities))
     conditions.extend(parse_threshold_conditions(text))
     return conditions
 
@@ -213,6 +214,44 @@ def parse_threshold_conditions(text: str) -> List[JsonDict]:
     return unique_dicts(conditions, ["type", "signal", "operator", "value", "unit", "transform"])
 
 
+def parse_signal_state_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse enum-like signal state predicates such as S_X is equal to "FULL"."""
+
+    if not normalized_entities:
+        return []
+
+    signals = _matching_entities(text, normalized_entities, "SIGNAL")
+    states = _matching_entities(text, normalized_entities, "STATE")
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if not signals or not states or not operator:
+        return []
+
+    if len(signals) > 1 or len(states) > 1:
+        return [
+            {
+                "type": "signal_state_condition",
+                "mention": text,
+                "need_review": True,
+                "review_reason": "ambiguous signal or state candidates",
+                "candidates": {
+                    "signals": [_candidate_entity(entity) for entity in signals],
+                    "states": [_candidate_entity(entity) for entity in states],
+                },
+            }
+        ]
+
+    return [
+        {
+            "type": "signal_state_condition",
+            "mention": text,
+            "signal": str(signals[0].get("canonical_name") or signals[0].get("mention")),
+            "operator": operator,
+            "required_state": str(states[0].get("canonical_name") or states[0].get("mention")),
+            "need_review": False,
+        }
+    ]
+
+
 def parse_fault_state_conditions(text: str) -> List[JsonDict]:
     """Parse DEM fault Active/Inactive predicates."""
 
@@ -228,3 +267,43 @@ def parse_fault_state_conditions(text: str) -> List[JsonDict]:
             }
         )
     return conditions
+
+
+def _matching_entities(text: str, entities: List[JsonDict], entity_type: str) -> List[JsonDict]:
+    return [
+        entity
+        for entity in entities
+        if str(entity.get("type", "")).upper() == entity_type and _entity_appears_in_text(text, entity)
+    ]
+
+
+def _entity_appears_in_text(text: str, entity: JsonDict) -> bool:
+    for field_name in ("mention", "canonical_name"):
+        value = str(entity.get(field_name, "")).strip()
+        if value and re.search(rf"(?<!\w){re.escape(value)}(?!\w)", text, flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _operator_from_entities(text: str, entities: List[JsonDict]) -> str | None:
+    for entity in entities:
+        if str(entity.get("type", "")).upper() != "OPERATOR" or not _entity_appears_in_text(text, entity):
+            continue
+        operator_text = str(entity.get("canonical_name") or entity.get("mention") or "").lower()
+        return OPERATOR_ALIASES.get(operator_text)
+    return None
+
+
+def _operator_from_text(text: str) -> str | None:
+    match = re.search(OPERATOR_PATTERN, text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return OPERATOR_ALIASES[match.group(0).lower()]
+
+
+def _candidate_entity(entity: JsonDict) -> JsonDict:
+    return {
+        "mention": entity.get("mention"),
+        "canonical_name": entity.get("canonical_name"),
+        "type": entity.get("type"),
+    }

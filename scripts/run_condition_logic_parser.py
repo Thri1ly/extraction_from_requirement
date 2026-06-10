@@ -16,7 +16,7 @@ from scripts.condition_review_utils import (
     write_jsonl,
     write_markdown,
 )
-from src.condition_logic_parser import parse_condition_logic
+from src.parser.condition_logic_parser import parse_condition_logic
 from src.schemas import JsonDict
 
 

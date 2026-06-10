@@ -1,9 +1,9 @@
 from copy import deepcopy
 from typing import Callable, List
 
-from src.action_parser import parse_actions
-from src.condition_parser import parse_conditions
-from src.coreference_resolver import resolve_coreferences
+from src.parser.action_parser import parse_actions
+from src.parser.condition_parser import parse_conditions
+from src.parser.coreference_resolver import resolve_coreferences
 from src.embedding_text_builder import build_embedding_text
 from src.normalizer import normalize_entities
 from src.schemas import JsonDict
