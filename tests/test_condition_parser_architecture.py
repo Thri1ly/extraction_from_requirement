@@ -151,7 +151,7 @@ def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_stat
     assert parsed["state_source"] == "dictionary"
     assert parsed["definition"] == {
         "type": "threshold_condition",
-        "mention": "{Column Velocity} is equal to 0rev/s",
+        "mention": "Column Velocity == 0rev/s",
         "signal": "S_COLUMN_VELOCITY",
         "transform": None,
         "operator": "==",
@@ -166,6 +166,55 @@ def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_stat
         "definition": 0.95,
     }
     assert parsed["need_review"] is False
+
+
+def test_parse_static_condition_with_zero_value_uses_bracketed_value_entity():
+    parsed = parse_condition_line(
+        "static condition({Column Velocity} is equal to zero)",
+        normalized_entities=[
+            {
+                "mention": "static condition",
+                "type": "STATE",
+                "canonical_name": "StaticCondition",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Column Velocity",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_VELOCITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "==",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "zero",
+                "type": "VALUE",
+                "canonical_name": "0",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "state_definition_condition"
+    assert parsed["state_name"] == "StaticCondition"
+    assert parsed["definition"] == {
+        "type": "threshold_condition",
+        "mention": "Column Velocity == 0",
+        "signal": "S_COLUMN_VELOCITY",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": None,
+        "need_review": False,
+    }
 
 
 def test_extract_condition_block_for_below_all_conditions():

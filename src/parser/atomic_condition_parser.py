@@ -43,6 +43,7 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
+    conditions.extend(parse_single_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_signal_state_conditions(text, normalized_entities))
     conditions.extend(parse_threshold_conditions(text))
@@ -149,6 +150,7 @@ def parse_bracketed_definition_conditions(text: str, normalized_entities: List[J
         if _entity_appears_in_text(definition_text, entity)
     ]
     definition_candidates = []
+    definition_candidates.extend(parse_single_signal_value_conditions(definition_text, definition_entities))
     definition_candidates.extend(parse_multi_signal_value_conditions(definition_text, definition_entities))
     definition_candidates.extend(parse_signal_state_conditions(definition_text, definition_entities))
     threshold = _parse_threshold_fragment(definition_text)
@@ -312,6 +314,46 @@ def parse_signal_state_conditions(text: str, normalized_entities: List[JsonDict]
     ]
 
 
+def parse_single_signal_value_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse entity-driven numeric predicates such as S_X is equal to zero."""
+
+    if not normalized_entities:
+        return []
+
+    signals = _matching_entities(text, normalized_entities, "SIGNAL")
+    values = _matching_entities(text, normalized_entities, "VALUE")
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if len(signals) != 1 or len(values) != 1 or not operator:
+        return []
+
+    parsed_value = _value_from_entity(values[0])
+    if parsed_value is None:
+        return [
+            {
+                "type": "threshold_condition",
+                "mention": text,
+                "need_review": True,
+                "review_reason": "value was not parsed",
+                "candidates": {"values": [_candidate_entity(value) for value in values]},
+            }
+        ]
+
+    signal_mention = _clean_braced_mention(str(signals[0].get("mention") or signals[0].get("canonical_name") or ""))
+    value_mention = f"{parsed_value['value']}{parsed_value['unit'] or ''}"
+    return [
+        {
+            "type": "threshold_condition",
+            "mention": f"{signal_mention} {operator} {value_mention}",
+            "signal": str(signals[0].get("canonical_name") or signals[0].get("mention")),
+            "transform": None,
+            "operator": operator,
+            "value": parsed_value["value"],
+            "unit": parsed_value["unit"],
+            "need_review": False,
+        }
+    ]
+
+
 def parse_multi_signal_value_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
     """Parse shared numeric predicates such as {A} and {B} are equal to zero."""
 
@@ -405,6 +447,9 @@ def _value_from_entity(entity: JsonDict) -> JsonDict | None:
         value_key = raw_value.lower()
         if value_key in VALUE_ALIASES:
             return {"value": VALUE_ALIASES[value_key], "unit": entity.get("unit")}
+        value_unit = re.fullmatch(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm|rev/s)", raw_value, flags=re.IGNORECASE)
+        if value_unit:
+            return {"value": number_value(value_unit.group("value")), "unit": value_unit.group("unit")}
         if re.fullmatch(r"\d+(?:\.\d+)?", raw_value):
             return {"value": number_value(raw_value), "unit": entity.get("unit")}
     return None
