@@ -36,8 +36,20 @@ def debug_atomic_condition_line(
         "condition_line": condition_line,
         "input_entities": list(entities),
         "normalized_entities": normalized_entities,
+        "parse_confidence": parse_confidence(parsed),
         "parsed": parsed,
     }
+
+
+def parse_confidence(parsed: JsonDict) -> JsonDict:
+    """Return a debug-friendly confidence summary for the parsed condition."""
+
+    confidence = parsed.get("confidence")
+    if isinstance(confidence, dict):
+        return dict(confidence)
+    if parsed.get("need_review"):
+        return {"overall": 0.2}
+    return {"overall": 0.9}
 
 
 def load_entities(entities_json: str | None = None, entities_file: Path | None = None) -> List[JsonDict]:

@@ -141,5 +141,6 @@ def test_debug_atomic_condition_line_outputs_confidence_for_unclear_named_defini
         "state_name": 0.45,
         "definition": 0.95,
     }
+    assert result["parse_confidence"] == parsed["confidence"]
     assert parsed["need_review"] is True
     assert parsed["review_reason"] == "state name inferred from unclear natural-language description"
