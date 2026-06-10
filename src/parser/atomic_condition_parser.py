@@ -26,8 +26,11 @@ OPERATOR_ALIASES = {
 }
 
 OPERATOR_PATTERN = "|".join(re.escape(operator) for operator in sorted(OPERATOR_ALIASES, key=len, reverse=True))
-SIGNAL_PATTERN = r"S_[A-Z0-9_]+|vehicle speed|Column Torque|Driver Torque|assist torque|torque demand"
-VALUE_UNIT_PATTERN = r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm)"
+SIGNAL_PATTERN = r"S_[A-Z0-9_]+|vehicle speed|Column Torque|Column Velocity|Driver Torque|assist torque|torque demand"
+VALUE_UNIT_PATTERN = r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm|rev/s)"
+VALUE_ALIASES = {
+    "zero": 0,
+}
 
 
 def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | None = None) -> List[JsonDict]:
@@ -35,10 +38,12 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
 
     normalized_entities = normalized_entities or []
     conditions: List[JsonDict] = []
+    conditions.extend(parse_bracketed_definition_conditions(text, normalized_entities))
     conditions.extend(parse_state_definition_conditions(text))
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
+    conditions.extend(parse_multi_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_signal_state_conditions(text, normalized_entities))
     conditions.extend(parse_threshold_conditions(text))
     return conditions
@@ -57,7 +62,7 @@ def _parse_threshold_fragment(fragment: str) -> JsonDict | None:
     """Parse one threshold expression such as S_X is greater than 3kph."""
 
     pattern = re.compile(
-        rf"(?P<signal>\|\{{[^}}]+\}}\||abs\{{[^}}]+\}}|absolute\s*\{{[^}}]+\}}|{SIGNAL_PATTERN})"
+        rf"(?P<signal>\|\{{[^}}]+\}}\||abs\{{[^}}]+\}}|absolute\s*\{{[^}}]+\}}|\{{[^}}]+\}}|{SIGNAL_PATTERN})"
         rf"\s+(?:is\s+)?(?P<operator>{OPERATOR_PATTERN})\s+{VALUE_UNIT_PATTERN}",
         flags=re.IGNORECASE,
     )
@@ -78,6 +83,8 @@ def _parse_threshold_fragment(fragment: str) -> JsonDict | None:
         transform = "ABS"
         inner = re.search(r"\{([^}]+)\}", raw_signal)
         signal_mention = inner.group(1) if inner else raw_signal
+    elif raw_signal.startswith("{") and raw_signal.endswith("}"):
+        signal_mention = raw_signal[1:-1]
 
     return {
         "type": "threshold_condition",
@@ -122,6 +129,59 @@ def parse_state_definition_conditions(text: str) -> List[JsonDict]:
             }
         )
     return conditions
+
+
+def parse_bracketed_definition_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse named natural-language definitions whose bracketed predicate is clear."""
+
+    match = re.fullmatch(r"\s*(?P<main>.+?)\s*\((?P<definition>[^()]*)\)\s*", text)
+    if not match:
+        return []
+
+    main_clause = match.group("main").strip()
+    definition_text = match.group("definition").strip()
+    if not main_clause or not definition_text:
+        return []
+
+    definition_entities = [
+        entity
+        for entity in normalized_entities
+        if _entity_appears_in_text(definition_text, entity)
+    ]
+    definition_candidates = []
+    definition_candidates.extend(parse_multi_signal_value_conditions(definition_text, definition_entities))
+    definition_candidates.extend(parse_signal_state_conditions(definition_text, definition_entities))
+    threshold = _parse_threshold_fragment(definition_text)
+    if threshold:
+        _apply_signal_entity_canonical(threshold, definition_text, definition_entities)
+        definition_candidates.append(threshold)
+
+    definition = _first_confident_definition(definition_candidates)
+    if not definition:
+        return []
+
+    state_name, state_source, state_confidence = _state_name_from_main_clause(main_clause, normalized_entities)
+    definition_confidence = _definition_confidence(definition)
+    confidence = {
+        "overall": round((0.95 + state_confidence + definition_confidence) / 3, 2),
+        "structure": 0.95,
+        "state_name": state_confidence,
+        "definition": definition_confidence,
+    }
+    need_review = state_confidence < 0.8 or bool(definition.get("need_review"))
+    result = {
+        "type": "state_definition_condition",
+        "mention": text,
+        "state_name": state_name,
+        "state_source": state_source,
+        "definition_relation": "DEFINED_BY",
+        "definition": definition,
+        "confidence": confidence,
+        "need_review": need_review,
+    }
+    if need_review and state_confidence < 0.8:
+        result["review_reason"] = "state name inferred from unclear natural-language description"
+    return [result]
 
 
 def parse_redundant_signal_validity(text: str) -> List[JsonDict]:
@@ -203,8 +263,8 @@ def parse_threshold_conditions(text: str) -> List[JsonDict]:
 
     conditions: List[JsonDict] = []
     pattern = re.compile(
-        rf"(?P<expr>(?:\|\{{[^}}]+\}}\||abs\{{[^}}]+\}}|absolute\s*\{{[^}}]+\}}|{SIGNAL_PATTERN})"
-        rf"\s+(?:is\s+)?(?:{OPERATOR_PATTERN})\s+\d+(?:\.\d+)?\s*(?:kph|Nm))",
+        rf"(?P<expr>(?:\|\{{[^}}]+\}}\||abs\{{[^}}]+\}}|absolute\s*\{{[^}}]+\}}|\{{[^}}]+\}}|{SIGNAL_PATTERN})"
+        rf"\s+(?:is\s+)?(?:{OPERATOR_PATTERN})\s+{VALUE_UNIT_PATTERN})",
         flags=re.IGNORECASE,
     )
     for match in pattern.finditer(text):
@@ -252,6 +312,58 @@ def parse_signal_state_conditions(text: str, normalized_entities: List[JsonDict]
     ]
 
 
+def parse_multi_signal_value_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse shared numeric predicates such as {A} and {B} are equal to zero."""
+
+    if not normalized_entities:
+        return []
+
+    signals = _matching_entities(text, normalized_entities, "SIGNAL")
+    values = _matching_entities(text, normalized_entities, "VALUE")
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if len(signals) < 2 or len(values) != 1 or not operator:
+        return []
+
+    parsed_value = _value_from_entity(values[0])
+    if parsed_value is None:
+        return [
+            {
+                "type": "condition_group",
+                "logic": "AND",
+                "mention": text,
+                "need_review": True,
+                "review_reason": "shared value was not parsed",
+                "candidates": {"values": [_candidate_entity(value) for value in values]},
+            }
+        ]
+
+    children = []
+    for signal in signals:
+        signal_mention = _clean_braced_mention(str(signal.get("mention") or signal.get("canonical_name") or ""))
+        children.append(
+            {
+                "type": "threshold_condition",
+                "mention": f"{signal_mention} {operator} {parsed_value['value']}",
+                "signal": str(signal.get("canonical_name") or signal.get("mention")),
+                "transform": None,
+                "operator": operator,
+                "value": parsed_value["value"],
+                "unit": parsed_value["unit"],
+                "need_review": False,
+            }
+        )
+
+    return [
+        {
+            "type": "condition_group",
+            "logic": "AND",
+            "mention": text,
+            "children": children,
+            "need_review": False,
+        }
+    ]
+
+
 def parse_fault_state_conditions(text: str) -> List[JsonDict]:
     """Parse DEM fault Active/Inactive predicates."""
 
@@ -283,6 +395,63 @@ def _entity_appears_in_text(text: str, entity: JsonDict) -> bool:
         if value and re.search(rf"(?<!\w){re.escape(value)}(?!\w)", text, flags=re.IGNORECASE):
             return True
     return False
+
+
+def _value_from_entity(entity: JsonDict) -> JsonDict | None:
+    for field_name in ("canonical_name", "mention"):
+        raw_value = str(entity.get(field_name, "")).strip().strip("\"'")
+        if not raw_value:
+            continue
+        value_key = raw_value.lower()
+        if value_key in VALUE_ALIASES:
+            return {"value": VALUE_ALIASES[value_key], "unit": entity.get("unit")}
+        if re.fullmatch(r"\d+(?:\.\d+)?", raw_value):
+            return {"value": number_value(raw_value), "unit": entity.get("unit")}
+    return None
+
+
+def _clean_braced_mention(mention: str) -> str:
+    return mention.strip().strip("{}").strip()
+
+
+def _first_confident_definition(candidates: List[JsonDict]) -> JsonDict | None:
+    for candidate in candidates:
+        if not candidate.get("need_review"):
+            return candidate
+    return candidates[0] if candidates else None
+
+
+def _definition_confidence(definition: JsonDict) -> float:
+    if definition.get("need_review"):
+        return 0.6
+    if definition.get("type") in {"condition_group", "threshold_condition", "signal_state_condition"}:
+        return 0.95
+    return 0.75
+
+
+def _apply_signal_entity_canonical(threshold: JsonDict, text: str, entities: List[JsonDict]) -> None:
+    signals = _matching_entities(text, entities, "SIGNAL")
+    if len(signals) == 1:
+        threshold["signal"] = str(signals[0].get("canonical_name") or signals[0].get("mention"))
+
+
+def _state_name_from_main_clause(main_clause: str, normalized_entities: List[JsonDict]) -> tuple[str, str, float]:
+    states = [
+        entity
+        for entity in normalized_entities
+        if str(entity.get("type", "")).upper() == "STATE" and _entity_appears_in_text(main_clause, entity)
+    ]
+    if len(states) == 1:
+        return str(states[0].get("canonical_name") or states[0].get("mention")), "dictionary", 0.9
+
+    return _pascal_case_name(main_clause), "inferred_from_text", 0.45
+
+
+def _pascal_case_name(text: str) -> str:
+    cleaned = re.sub(r"[{}()\"']", " ", text)
+    cleaned = re.sub(r"\b(?:no|the|a|an|and|or|condition|conditions)\b", " ", cleaned, flags=re.IGNORECASE)
+    words = re.findall(r"[A-Za-z0-9]+", cleaned)
+    return "".join(word[:1].upper() + word[1:].lower() for word in words) or "UnnamedCondition"
 
 
 def _operator_from_entities(text: str, entities: List[JsonDict]) -> str | None:

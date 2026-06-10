@@ -18,6 +18,30 @@ def write_dictionary(path):
                 "aliases": ["3kph"],
                 "members": [],
             },
+            {
+                "canonical_name": "S_COLUMN_TORQUE",
+                "type": "SIGNAL",
+                "aliases": ["Column Torque"],
+                "members": [],
+            },
+            {
+                "canonical_name": "S_COLUMN_VELOCITY",
+                "type": "SIGNAL",
+                "aliases": ["Column Velocity"],
+                "members": [],
+            },
+            {
+                "canonical_name": "==",
+                "type": "OPERATOR",
+                "aliases": ["equal to"],
+                "members": [],
+            },
+            {
+                "canonical_name": "0",
+                "type": "VALUE",
+                "aliases": ["zero"],
+                "members": [],
+            },
         ]
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -84,3 +108,38 @@ def test_debug_atomic_condition_line_cli_writes_json_outputs(tmp_path):
     assert exit_code == 0
     assert json.loads(output_json.read_text(encoding="utf-8"))["requirement_id"] == "DEBUG_002"
     assert json.loads(output_jsonl.read_text(encoding="utf-8"))["parsed"]["operator"] == ">"
+
+
+def test_debug_atomic_condition_line_outputs_confidence_for_unclear_named_definition(tmp_path):
+    dictionary = tmp_path / "dictionary.json"
+    write_dictionary(dictionary)
+    entities = [
+        {"mention": "input torque", "type": "UNKNOWN"},
+        {"mention": "column movement condition", "type": "UNKNOWN"},
+        {"mention": "Column Torque", "type": "SIGNAL"},
+        {"mention": "Column Velocity", "type": "SIGNAL"},
+        {"mention": "equal to", "type": "OPERATOR"},
+        {"mention": "zero", "type": "VALUE"},
+    ]
+
+    result = debug_atomic_condition_line(
+        "no input torque and no column movement condition ({Column Torque} and {Column Velocity} are equal to zero)",
+        entities,
+        dictionary,
+        requirement_id="DEBUG_CONFIDENCE",
+    )
+
+    parsed = result["parsed"]
+    assert parsed["type"] == "state_definition_condition"
+    assert parsed["state_source"] == "inferred_from_text"
+    assert parsed["definition"]["type"] == "condition_group"
+    assert parsed["definition"]["children"][0]["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["definition"]["children"][1]["signal"] == "S_COLUMN_VELOCITY"
+    assert parsed["confidence"] == {
+        "overall": 0.78,
+        "structure": 0.95,
+        "state_name": 0.45,
+        "definition": 0.95,
+    }
+    assert parsed["need_review"] is True
+    assert parsed["review_reason"] == "state name inferred from unclear natural-language description"

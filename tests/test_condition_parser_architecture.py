@@ -46,6 +46,128 @@ def test_parse_signal_state_condition_from_normalized_entities():
     }
 
 
+def test_parse_multi_signal_shared_zero_value_condition():
+    parsed = parse_condition_line(
+        "{Column Torque} and {Column Velocity} are equal to zero",
+        normalized_entities=[
+            {
+                "mention": "Column Torque",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_TORQUE",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "Column Velocity",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_VELOCITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "EQUAL TO",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "zero",
+                "type": "VALUE",
+                "canonical_name": "0",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": "{Column Torque} and {Column Velocity} are equal to zero",
+        "children": [
+            {
+                "type": "threshold_condition",
+                "mention": "Column Torque == 0",
+                "signal": "S_COLUMN_TORQUE",
+                "transform": None,
+                "operator": "==",
+                "value": 0,
+                "unit": None,
+                "need_review": False,
+            },
+            {
+                "type": "threshold_condition",
+                "mention": "Column Velocity == 0",
+                "signal": "S_COLUMN_VELOCITY",
+                "transform": None,
+                "operator": "==",
+                "value": 0,
+                "unit": None,
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_state():
+    parsed = parse_condition_line(
+        "static condition({Column Velocity} is equal to 0rev/s)",
+        normalized_entities=[
+            {
+                "mention": "static condition",
+                "type": "STATE",
+                "canonical_name": "StaticCondition",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Column Velocity",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_VELOCITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "EQUAL TO",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0rev/s",
+                "type": "VALUE",
+                "canonical_name": "0rev/s",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "state_definition_condition"
+    assert parsed["state_name"] == "StaticCondition"
+    assert parsed["state_source"] == "dictionary"
+    assert parsed["definition"] == {
+        "type": "threshold_condition",
+        "mention": "{Column Velocity} is equal to 0rev/s",
+        "signal": "S_COLUMN_VELOCITY",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": "rev/s",
+        "need_review": False,
+    }
+    assert parsed["confidence"] == {
+        "overall": 0.93,
+        "structure": 0.95,
+        "state_name": 0.9,
+        "definition": 0.95,
+    }
+    assert parsed["need_review"] is False
+
+
 def test_extract_condition_block_for_below_all_conditions():
     text = """EPS shall transition from Normal state to Degraded state if below ALL conditions are met:
 S_VEHICLE_SPEED > 10kph
