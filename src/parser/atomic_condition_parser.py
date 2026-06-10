@@ -46,6 +46,7 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
     conditions.extend(parse_single_signal_value_conditions(text, normalized_entities))
+    conditions.extend(parse_multi_signal_value_state_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_signal_state_conditions(text, normalized_entities))
     conditions.extend(parse_threshold_conditions(text))
@@ -356,6 +357,63 @@ def parse_single_signal_value_conditions(text: str, normalized_entities: List[Js
     ]
 
 
+def parse_multi_signal_value_state_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse shared enum labels such as A and B are equal to "0x1: Valid"."""
+
+    if not normalized_entities or ":" not in text:
+        return []
+
+    signals = _matching_entities(text, normalized_entities, "SIGNAL")
+    values = _matching_entities(text, normalized_entities, "VALUE")
+    states = _matching_entities(text, normalized_entities, "STATE")
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if len(signals) < 2 or len(values) != 1 or len(states) != 1 or not operator:
+        return []
+
+    parsed_value = _value_from_entity(values[0])
+    if parsed_value is None:
+        return []
+
+    required_state = str(states[0].get("canonical_name") or states[0].get("mention"))
+    children: List[JsonDict] = []
+    for signal in signals:
+        signal_name = str(signal.get("canonical_name") or signal.get("mention"))
+        signal_mention = _clean_braced_mention(str(signal.get("mention") or signal_name))
+        value_mention = f"{parsed_value['value']}{parsed_value['unit'] or ''}"
+        children.append(
+            {
+                "type": "threshold_condition",
+                "mention": f"{signal_mention} {operator} {value_mention}",
+                "signal": signal_name,
+                "transform": None,
+                "operator": operator,
+                "value": parsed_value["value"],
+                "unit": parsed_value["unit"],
+                "need_review": False,
+            }
+        )
+        children.append(
+            {
+                "type": "signal_state_condition",
+                "mention": f"{signal_mention} {operator} {required_state}",
+                "signal": signal_name,
+                "operator": operator,
+                "required_state": required_state,
+                "need_review": False,
+            }
+        )
+
+    return [
+        {
+            "type": "condition_group",
+            "logic": "AND",
+            "mention": text,
+            "children": children,
+            "need_review": False,
+        }
+    ]
+
+
 def parse_multi_signal_value_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
     """Parse shared numeric predicates such as {A} and {B} are equal to zero."""
 
@@ -449,6 +507,8 @@ def _value_from_entity(entity: JsonDict) -> JsonDict | None:
         value_key = raw_value.lower()
         if value_key in VALUE_ALIASES:
             return {"value": VALUE_ALIASES[value_key], "unit": entity.get("unit")}
+        if re.fullmatch(r"0x[0-9a-f]+", raw_value, flags=re.IGNORECASE):
+            return {"value": raw_value, "unit": entity.get("unit")}
         value_unit = re.fullmatch(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm|rev/s)", raw_value, flags=re.IGNORECASE)
         if value_unit:
             return {"value": number_value(value_unit.group("value")), "unit": value_unit.group("unit")}

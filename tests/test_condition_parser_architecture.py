@@ -111,6 +111,94 @@ def test_parse_multi_signal_shared_zero_value_condition():
     }
 
 
+def test_parse_multi_signal_shared_value_state_label_condition():
+    parsed = parse_condition_line(
+        'S_DSR_VDC_REQUEST1 AND S_DSR_VDC_REQUEST2 are equal to "0x1: Valid"',
+        normalized_entities=[
+            {
+                "mention": "S_DSR_VDC_REQUEST1",
+                "type": "SIGNAL",
+                "canonical_name": "S_DSR_VDC_REQUEST1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "S_DSR_VDC_REQUEST2",
+                "type": "SIGNAL",
+                "canonical_name": "S_DSR_VDC_REQUEST2",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "==",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0x1",
+                "type": "VALUE",
+                "canonical_name": "0x1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Valid",
+                "type": "STATE",
+                "canonical_name": "Valid",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": 'S_DSR_VDC_REQUEST1 AND S_DSR_VDC_REQUEST2 are equal to "0x1: Valid"',
+        "children": [
+            {
+                "type": "threshold_condition",
+                "mention": "S_DSR_VDC_REQUEST1 == 0x1",
+                "signal": "S_DSR_VDC_REQUEST1",
+                "transform": None,
+                "operator": "==",
+                "value": "0x1",
+                "unit": None,
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_DSR_VDC_REQUEST1 == Valid",
+                "signal": "S_DSR_VDC_REQUEST1",
+                "operator": "==",
+                "required_state": "Valid",
+                "need_review": False,
+            },
+            {
+                "type": "threshold_condition",
+                "mention": "S_DSR_VDC_REQUEST2 == 0x1",
+                "signal": "S_DSR_VDC_REQUEST2",
+                "transform": None,
+                "operator": "==",
+                "value": "0x1",
+                "unit": None,
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_DSR_VDC_REQUEST2 == Valid",
+                "signal": "S_DSR_VDC_REQUEST2",
+                "operator": "==",
+                "required_state": "Valid",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
 def test_parse_bracketed_definition_does_not_expand_unclear_outer_signals_to_zero():
     conditions = parse_atomic_conditions(
         "no input torque and no column movement condition ({Column Torque} and {Column Velocity} are equal to zero)",

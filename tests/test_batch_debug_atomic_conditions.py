@@ -76,6 +76,34 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
     assert "REQ_REVIEW" in report
     assert "state_definition_condition" in report
 
+    parsed_without_review_md = tmp_path / "debug_report.parsed_without_review.md"
+    parsed_with_review_md = tmp_path / "debug_report.parsed_with_review.md"
+    unparsed_md = tmp_path / "debug_report.unparsed.md"
+
+    assert parsed_without_review_md.exists()
+    assert parsed_with_review_md.exists()
+    assert unparsed_md.exists()
+
+    pass_report = parsed_without_review_md.read_text(encoding="utf-8")
+    review_report = parsed_with_review_md.read_text(encoding="utf-8")
+    fail_report = unparsed_md.read_text(encoding="utf-8")
+
+    assert "# Parsed Without Review" in pass_report
+    assert "REQ_PASS" in pass_report
+    assert "Input Entities" in pass_report
+    assert "Normalized Entities" in pass_report
+    assert "vehicle speed" in pass_report
+    assert "S_VEHICLE_SPEED" in pass_report
+
+    assert "# Parsed With Review" in review_report
+    assert "REQ_REVIEW" in review_report
+    assert "input torque" in review_report
+    assert "S_COLUMN_TORQUE" in review_report
+
+    assert "# Unparsed" in fail_report
+    assert "REQ_FAIL" in fail_report
+    assert "unsupported condition" in fail_report
+
 
 def test_batch_debug_atomic_conditions_cli(tmp_path):
     source = tmp_path / "condition_lines.jsonl"
@@ -112,3 +140,4 @@ def test_batch_debug_atomic_conditions_cli(tmp_path):
     assert exit_code == 0
     assert output_jsonl.exists()
     assert output_md.exists()
+    assert (tmp_path / "debug_report.parsed_without_review.md").exists()

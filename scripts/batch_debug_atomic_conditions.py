@@ -40,6 +40,7 @@ def run_batch_debug_atomic_conditions(
 
     write_jsonl(output_jsonl, results)
     write_markdown(output_md, build_markdown_report(results))
+    write_category_reports(output_md, results)
     return results
 
 
@@ -64,6 +65,42 @@ def build_markdown_report(results: Sequence[JsonDict]) -> str:
         md.append(f"- Overall confidence: `{_overall_confidence(result):.2f}`\n\n")
         md.append("**Condition Line**\n\n")
         md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
+        md.append("**Parsed Result**\n\n")
+        md.append(json_block(parsed) + "\n\n")
+    return "".join(md)
+
+
+def write_category_reports(output_md: Path, results: Sequence[JsonDict]) -> None:
+    """Write parsed/review/unparsed detail reports next to the main report."""
+
+    categories = {
+        "parsed_without_review": ("Parsed Without Review", _is_parsed_without_review),
+        "parsed_with_review": ("Parsed With Review", _is_parsed_with_review),
+        "unparsed": ("Unparsed", _is_unparsed),
+    }
+    for suffix, (title, predicate) in categories.items():
+        category_path = output_md.with_name(f"{output_md.stem}.{suffix}{output_md.suffix}")
+        category_results = [result for result in results if predicate(result)]
+        write_markdown(category_path, build_category_report(title, category_results))
+
+
+def build_category_report(title: str, results: Sequence[JsonDict]) -> str:
+    """Build a Markdown detail report for one parse category."""
+
+    md = [f"# {title}\n\n"]
+    md.append(f"- Count: {len(results)}\n\n")
+    for index, result in enumerate(results, 1):
+        parsed = result.get("parsed", {})
+        md.append(f"## {index}. {result.get('requirement_id') or 'UNKNOWN_ID'}\n\n")
+        md.append(f"- Parsed type: `{parsed.get('type', 'UNKNOWN')}`\n")
+        md.append(f"- Need review: `{str(parsed.get('need_review', False)).lower()}`\n")
+        md.append(f"- Overall confidence: `{_overall_confidence(result):.2f}`\n\n")
+        md.append("**Condition Line**\n\n")
+        md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
+        md.append("**Input Entities**\n\n")
+        md.append(json_block(result.get("input_entities", [])) + "\n\n")
+        md.append("**Normalized Entities**\n\n")
+        md.append(json_block(result.get("normalized_entities", [])) + "\n\n")
         md.append("**Parsed Result**\n\n")
         md.append(json_block(parsed) + "\n\n")
     return "".join(md)
@@ -98,6 +135,20 @@ def summarize_results(results: Sequence[JsonDict]) -> JsonDict:
         "unparsed": unparsed,
         "average_overall_confidence": round(average_confidence, 2),
     }
+
+
+def _is_unparsed(result: JsonDict) -> bool:
+    return result.get("parsed", {}).get("type") == "unparsed_condition"
+
+
+def _is_parsed_with_review(result: JsonDict) -> bool:
+    parsed = result.get("parsed", {})
+    return parsed.get("type") != "unparsed_condition" and bool(parsed.get("need_review"))
+
+
+def _is_parsed_without_review(result: JsonDict) -> bool:
+    parsed = result.get("parsed", {})
+    return parsed.get("type") != "unparsed_condition" and not bool(parsed.get("need_review"))
 
 
 def _condition_line_from_row(row: JsonDict) -> str:
