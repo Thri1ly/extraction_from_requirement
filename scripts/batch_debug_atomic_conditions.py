@@ -99,11 +99,6 @@ def build_category_report(title: str, results: Sequence[JsonDict]) -> str:
         md.append(f"- Overall confidence: `{_overall_confidence(result):.2f}`\n\n")
         md.append("**Condition Line**\n\n")
         md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
-        md.append("**Normalized Entities**\n\n")
-        md.append(json_block(result.get("normalized_entities", [])) + "\n\n")
-        if result.get("syntax_analysis"):
-            md.append("**Syntax Analysis**\n\n")
-            md.append(json_block(result["syntax_analysis"]) + "\n\n")
         md.append("**Parsed Result**\n\n")
         md.append(json_block(parsed) + "\n\n")
     return "".join(md)
