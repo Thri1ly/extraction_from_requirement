@@ -8,7 +8,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.condition_review_utils import json_block, read_jsonl, row_id, text_block, write_jsonl, write_markdown
-from scripts.debug_atomic_condition_line import debug_atomic_condition_line
+from scripts.debug_atomic_condition_line import ATOMIC_PARSERS, debug_atomic_condition_line
 from src.schemas import JsonDict
 
 
@@ -22,6 +22,7 @@ def run_batch_debug_atomic_conditions(
     output_jsonl: Path,
     output_md: Path,
     unknown_candidates_path: Path | None = None,
+    atomic_parser: str = "legacy",
 ) -> List[JsonDict]:
     """Debug atomic parsing for all condition lines in a JSONL file."""
 
@@ -35,6 +36,7 @@ def run_batch_debug_atomic_conditions(
             dictionary_path=dictionary_path,
             unknown_candidates_path=unknown_candidates_path,
             requirement_id=row_id(row),
+            atomic_parser=atomic_parser,
         )
         results.append({**_source_metadata(row), **result})
 
@@ -99,6 +101,9 @@ def build_category_report(title: str, results: Sequence[JsonDict]) -> str:
         md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
         md.append("**Normalized Entities**\n\n")
         md.append(json_block(result.get("normalized_entities", [])) + "\n\n")
+        if result.get("syntax_analysis"):
+            md.append("**Syntax Analysis**\n\n")
+            md.append(json_block(result["syntax_analysis"]) + "\n\n")
         md.append("**Parsed Result**\n\n")
         md.append(json_block(parsed) + "\n\n")
     return "".join(md)
@@ -192,6 +197,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-jsonl", required=True, type=Path, help="Detailed debug result JSONL output path.")
     parser.add_argument("--output-md", required=True, type=Path, help="Markdown summary report output path.")
     parser.add_argument("--unknown-candidates", type=Path, help="Optional JSONL path for dictionary misses.")
+    parser.add_argument(
+        "--atomic-parser",
+        choices=sorted(ATOMIC_PARSERS),
+        default="legacy",
+        help="Atomic parser module to use.",
+    )
     return parser
 
 
@@ -206,6 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_jsonl=args.output_jsonl,
         output_md=args.output_md,
         unknown_candidates_path=args.unknown_candidates,
+        atomic_parser=args.atomic_parser,
     )
     return 0
 

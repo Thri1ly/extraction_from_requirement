@@ -9,9 +9,18 @@ if __package__ is None or __package__ == "":
 
 from scripts.condition_review_utils import write_jsonl
 from src.parser.atomic_condition_parser import parse_condition_line
+from src.parser.syntactic_atomic_condition_parser import (
+    build_syntax_analysis,
+    parse_condition_line as parse_syntactic_condition_line,
+)
 from src.entity_dictionary_builder import load_jsonl
 from src.normalizer import normalize_entities
 from src.schemas import JsonDict
+
+ATOMIC_PARSERS = {
+    "legacy": parse_condition_line,
+    "syntactic": parse_syntactic_condition_line,
+}
 
 
 def debug_atomic_condition_line(
@@ -20,9 +29,11 @@ def debug_atomic_condition_line(
     dictionary_path: Path,
     unknown_candidates_path: Path | None = None,
     requirement_id: str | None = None,
+    atomic_parser: str = "legacy",
 ) -> JsonDict:
     """Normalize supplied entities and parse one condition line for interactive debugging."""
 
+    parser_func = resolve_atomic_parser(atomic_parser)
     normalized_entities = normalize_entities(
         text=condition_line,
         rule_entities=list(entities),
@@ -30,15 +41,29 @@ def debug_atomic_condition_line(
         unknown_candidates_path=unknown_candidates_path,
         requirement_id=requirement_id,
     )
-    parsed = parse_condition_line(condition_line, normalized_entities=normalized_entities)
-    return {
+    parsed = parser_func(condition_line, normalized_entities=normalized_entities)
+    result = {
         "requirement_id": requirement_id,
         "condition_line": condition_line,
+        "atomic_parser": atomic_parser,
         "input_entities": list(entities),
         "normalized_entities": normalized_entities,
         "parse_confidence": parse_confidence(parsed),
         "parsed": parsed,
     }
+    if atomic_parser == "syntactic":
+        result["syntax_analysis"] = build_syntax_analysis(condition_line, normalized_entities)
+    return result
+
+
+def resolve_atomic_parser(parser_name: str):
+    """Return the requested atomic parser callable."""
+
+    try:
+        return ATOMIC_PARSERS[parser_name]
+    except KeyError as exc:
+        choices = ", ".join(sorted(ATOMIC_PARSERS))
+        raise ValueError(f"Unknown atomic parser '{parser_name}'. Expected one of: {choices}") from exc
 
 
 def parse_confidence(parsed: JsonDict) -> JsonDict:
@@ -94,6 +119,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entities-file", type=Path, help="Extractor entities from a JSON or JSONL file.")
     parser.add_argument("--unknown-candidates", type=Path, help="Optional JSONL path for dictionary misses.")
     parser.add_argument("--requirement-id", help="Optional ID recorded in unknown candidate evidence.")
+    parser.add_argument(
+        "--atomic-parser",
+        choices=sorted(ATOMIC_PARSERS),
+        default="legacy",
+        help="Atomic parser module to use.",
+    )
     parser.add_argument("--output-json", type=Path, help="Optional path to write the debug result as pretty JSON.")
     parser.add_argument("--output-jsonl", type=Path, help="Optional path to write the debug result as one JSONL row.")
     return parser
@@ -111,6 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dictionary_path=args.dictionary,
         unknown_candidates_path=args.unknown_candidates,
         requirement_id=args.requirement_id,
+        atomic_parser=args.atomic_parser,
     )
     formatted = json.dumps(result, ensure_ascii=False, indent=2)
     print(formatted)

@@ -16,6 +16,9 @@ def write_dictionary(path):
         "entities": [
             {"canonical_name": "S_VEHICLE_SPEED", "type": "SIGNAL", "aliases": ["vehicle speed"], "members": []},
             {"canonical_name": "3kph", "type": "VALUE", "aliases": ["3kph"], "members": []},
+            {"canonical_name": "S_EPS_SYSTEM_STATE", "type": "SIGNAL", "aliases": ["EPS system state"], "members": []},
+            {"canonical_name": "LIMP_HOME", "type": "STATE", "aliases": ["LIMP HOME"], "members": []},
+            {"canonical_name": "LIMP_ASIDE", "type": "STATE", "aliases": ["LIMP ASIDE"], "members": []},
             {"canonical_name": "S_COLUMN_TORQUE", "type": "SIGNAL", "aliases": ["Column Torque"], "members": []},
             {"canonical_name": "S_COLUMN_VELOCITY", "type": "SIGNAL", "aliases": ["Column Velocity"], "members": []},
             {"canonical_name": "==", "type": "OPERATOR", "aliases": ["equal to"], "members": []},
@@ -144,3 +147,43 @@ def test_batch_debug_atomic_conditions_cli(tmp_path):
     assert output_jsonl.exists()
     assert output_md.exists()
     assert (tmp_path / "debug_report.parsed_without_review.md").exists()
+
+
+def test_run_batch_debug_atomic_conditions_can_use_syntactic_parser(tmp_path):
+    source = tmp_path / "condition_lines.jsonl"
+    dictionary = tmp_path / "dictionary.json"
+    output_jsonl = tmp_path / "debug_results.jsonl"
+    output_md = tmp_path / "debug_report.md"
+    write_dictionary(dictionary)
+    write_jsonl(
+        source,
+        [
+            {
+                "requirement_id": "REQ_SYNTACTIC",
+                "condition_line": "EPS system state shall be LIMP HOME or LIMP ASIDE",
+                "entities": [
+                    {"mention": "EPS system state", "type": "SIGNAL"},
+                    {"mention": "LIMP HOME", "type": "STATE"},
+                    {"mention": "LIMP ASIDE", "type": "STATE"},
+                ],
+            }
+        ],
+    )
+
+    rows = run_batch_debug_atomic_conditions(
+        source,
+        dictionary,
+        output_jsonl,
+        output_md,
+        atomic_parser="syntactic",
+    )
+
+    assert rows[0]["atomic_parser"] == "syntactic"
+    assert rows[0]["syntax_analysis"]["placeholder_text"] == "SIGNAL_1 shall be STATE_1 or STATE_2"
+    assert rows[0]["parsed"]["type"] == "condition_group"
+    assert rows[0]["parsed"]["logic"] == "OR"
+
+    parsed_without_review = tmp_path / "debug_report.parsed_without_review.md"
+    report = parsed_without_review.read_text(encoding="utf-8")
+    assert "**Syntax Analysis**" in report
+    assert "SIGNAL_1 shall be STATE_1 or STATE_2" in report
