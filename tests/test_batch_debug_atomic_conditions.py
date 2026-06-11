@@ -90,18 +90,21 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
 
     assert "# Parsed Without Review" in pass_report
     assert "REQ_PASS" in pass_report
-    assert "Input Entities" in pass_report
+    assert "Input Entities" not in pass_report
     assert "Normalized Entities" in pass_report
     assert "vehicle speed" in pass_report
     assert "S_VEHICLE_SPEED" in pass_report
 
     assert "# Parsed With Review" in review_report
     assert "REQ_REVIEW" in review_report
+    assert "Input Entities" not in review_report
+    assert "Normalized Entities" in review_report
     assert "input torque" in review_report
     assert "S_COLUMN_TORQUE" in review_report
 
     assert "# Unparsed" in fail_report
     assert "REQ_FAIL" in fail_report
+    assert "Input Entities" not in fail_report
     assert "unsupported condition" in fail_report
 
 

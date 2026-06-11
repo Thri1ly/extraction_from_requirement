@@ -8,6 +8,9 @@ from src.schemas import JsonDict, number_value, unique_dicts
 OPERATOR_ALIASES = {
     "greater than or equal to": ">=",
     "less than or equal to": "<=",
+    "not equal to": "!=",
+    "not equals": "!=",
+    "not equal": "!=",
     "greater than": ">",
     "more than": ">",
     "above": ">",
@@ -45,6 +48,7 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
+    conditions.extend(parse_single_signal_value_state_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_state_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_conditions(text, normalized_entities))
@@ -357,6 +361,22 @@ def parse_single_signal_value_conditions(text: str, normalized_entities: List[Js
     ]
 
 
+def parse_single_signal_value_state_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse enum labels such as S_X is equal to "0x1: Override"."""
+
+    if not normalized_entities or ":" not in text:
+        return []
+
+    signals = _matching_entities(text, normalized_entities, "SIGNAL")
+    values = _matching_entities(text, normalized_entities, "VALUE")
+    states = _matching_entities(text, normalized_entities, "STATE")
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if len(signals) != 1 or len(values) != 1 or len(states) != 1 or not operator:
+        return []
+
+    return _build_value_state_condition_group(text, signals, values[0], states[0], operator)
+
+
 def parse_multi_signal_value_state_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
     """Parse shared enum labels such as A and B are equal to "0x1: Valid"."""
 
@@ -370,11 +390,23 @@ def parse_multi_signal_value_state_conditions(text: str, normalized_entities: Li
     if len(signals) < 2 or len(values) != 1 or len(states) != 1 or not operator:
         return []
 
-    parsed_value = _value_from_entity(values[0])
+    return _build_value_state_condition_group(text, signals, values[0], states[0], operator)
+
+
+def _build_value_state_condition_group(
+    text: str,
+    signals: List[JsonDict],
+    value: JsonDict,
+    state: JsonDict,
+    operator: str,
+) -> List[JsonDict]:
+    """Build condition_group children for VALUE: STATE labels."""
+
+    parsed_value = _value_from_entity(value)
     if parsed_value is None:
         return []
 
-    required_state = str(states[0].get("canonical_name") or states[0].get("mention"))
+    required_state = str(state.get("canonical_name") or state.get("mention"))
     children: List[JsonDict] = []
     for signal in signals:
         signal_name = str(signal.get("canonical_name") or signal.get("mention"))

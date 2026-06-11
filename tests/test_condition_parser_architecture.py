@@ -199,6 +199,119 @@ def test_parse_multi_signal_shared_value_state_label_condition():
     }
 
 
+def test_parse_multi_signal_shared_value_state_label_condition_with_not_equal_operator():
+    parsed = parse_condition_line(
+        'LDW request (S_LDW_HAPTIC_AVL) is not equal to "0x1: Available"',
+        normalized_entities=[
+            {
+                "mention": "LDW request",
+                "type": "SIGNAL",
+                "canonical_name": "S_LDW_REQUEST",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "S_LDW_HAPTIC_AVL",
+                "type": "SIGNAL",
+                "canonical_name": "S_LDW_HAPTIC_AVL",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "not equal to",
+                "type": "OPERATOR",
+                "canonical_name": "NOT EQUAL TO",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0x1",
+                "type": "VALUE",
+                "canonical_name": "0x1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Available",
+                "type": "STATE",
+                "canonical_name": "Available",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert [child["operator"] for child in parsed["children"]] == ["!=", "!=", "!=", "!="]
+    assert parsed["children"][0]["signal"] == "S_LDW_REQUEST"
+    assert parsed["children"][1]["required_state"] == "Available"
+    assert parsed["children"][2]["signal"] == "S_LDW_HAPTIC_AVL"
+    assert parsed["children"][3]["required_state"] == "Available"
+
+
+def test_parse_single_signal_value_state_label_condition():
+    parsed = parse_condition_line(
+        'S_DRIVER_OVERRIDE_STATUS is equal to "0x1: Override"',
+        normalized_entities=[
+            {
+                "mention": "S_DRIVER_OVERRIDE_STATUS",
+                "type": "SIGNAL",
+                "canonical_name": "S_DRIVER_OVERRIDE_STATUS",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "==",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0x1",
+                "type": "VALUE",
+                "canonical_name": "0x1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "Override",
+                "type": "STATE",
+                "canonical_name": "Override",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": 'S_DRIVER_OVERRIDE_STATUS is equal to "0x1: Override"',
+        "children": [
+            {
+                "type": "threshold_condition",
+                "mention": "S_DRIVER_OVERRIDE_STATUS == 0x1",
+                "signal": "S_DRIVER_OVERRIDE_STATUS",
+                "transform": None,
+                "operator": "==",
+                "value": "0x1",
+                "unit": None,
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_DRIVER_OVERRIDE_STATUS == Override",
+                "signal": "S_DRIVER_OVERRIDE_STATUS",
+                "operator": "==",
+                "required_state": "Override",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
 def test_parse_bracketed_definition_does_not_expand_unclear_outer_signals_to_zero():
     conditions = parse_atomic_conditions(
         "no input torque and no column movement condition ({Column Torque} and {Column Velocity} are equal to zero)",
