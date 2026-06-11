@@ -472,6 +472,208 @@ def test_parse_static_condition_with_zero_value_uses_bracketed_value_entity():
     }
 
 
+def test_parse_bracketed_signal_parameter_threshold_definition():
+    parsed = parse_condition_line(
+        "vehicle is moving at pre-defined minimum vehicle speed (S_VEHICLE_SPEED >= P_FD_MIN_VEH_SPD)",
+        normalized_entities=[
+            {
+                "mention": "vehicle",
+                "type": "COMPONENT",
+                "canonical_name": "VEHICLE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "moving",
+                "type": "STATE",
+                "canonical_name": "Moving",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "minimum vehicle speed",
+                "type": "PARAMETER",
+                "canonical_name": "P_FD_MIN_VEH_SPD",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "P_FD_MIN_VEH_SPD",
+                "type": "PARAMETER",
+                "canonical_name": "P_FD_MIN_VEH_SPD",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "state_definition_condition"
+    assert parsed["state_name"] == "Moving"
+    assert parsed["definition"] == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_VEHICLE_SPEED >= P_FD_MIN_VEH_SPD",
+        "signal": "S_VEHICLE_SPEED",
+        "operator": ">=",
+        "parameter": "P_FD_MIN_VEH_SPD",
+        "need_review": False,
+    }
+
+
+def test_signal_state_condition_does_not_accept_threshold_operator():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED >= moving",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": ">=",
+                "type": "OPERATOR",
+                "canonical_name": ">=",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "moving",
+                "type": "STATE",
+                "canonical_name": "Moving",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "unparsed_condition"
+    assert parsed["need_review"] is True
+
+
+def test_parse_bracketed_signal_state_and_parameter_threshold_condition():
+    parsed = parse_condition_line(
+        "K Factor(S_SPC_K_FACTOR_REQUEST) is valid and greater than P_K_FACTOR_THERSHOLD",
+        normalized_entities=[
+            {
+                "mention": "S_SPC_K_FACTOR_REQUEST",
+                "type": "SIGNAL",
+                "canonical_name": "S_SPC_K_FACTOR_REQUEST",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "valid",
+                "type": "STATE",
+                "canonical_name": "valid",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "greater than",
+                "type": "OPERATOR",
+                "canonical_name": "greater than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_K_FACTOR_THERSHOLD",
+                "type": "PARAMETER",
+                "canonical_name": "P_K_FACTOR_THERSHOLD",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": "K Factor(S_SPC_K_FACTOR_REQUEST) is valid and greater than P_K_FACTOR_THERSHOLD",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "S_SPC_K_FACTOR_REQUEST == valid",
+                "signal": "S_SPC_K_FACTOR_REQUEST",
+                "operator": "==",
+                "required_state": "valid",
+                "need_review": False,
+            },
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_SPC_K_FACTOR_REQUEST > P_K_FACTOR_THERSHOLD",
+                "signal": "S_SPC_K_FACTOR_REQUEST",
+                "operator": ">",
+                "parameter": "P_K_FACTOR_THERSHOLD",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_threshold_condition_with_c_deg_unit():
+    parsed = parse_condition_line("S_STEER_ANGLE = 0 c-deg")
+
+    assert parsed == {
+        "type": "threshold_condition",
+        "mention": "S_STEER_ANGLE = 0 c-deg",
+        "signal": "S_STEER_ANGLE",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": "c-deg",
+        "need_review": False,
+    }
+
+
+def test_parse_entity_value_condition_with_c_deg_unit():
+    parsed = parse_condition_line(
+        "S_STEER_ANGLE is equal to 0 c-deg",
+        normalized_entities=[
+            {
+                "mention": "S_STEER_ANGLE",
+                "type": "SIGNAL",
+                "canonical_name": "S_STEER_ANGLE",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0 c-deg",
+                "type": "VALUE",
+                "canonical_name": "0 c-deg",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "threshold_condition",
+        "mention": "S_STEER_ANGLE == 0c-deg",
+        "signal": "S_STEER_ANGLE",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": "c-deg",
+        "need_review": False,
+    }
+
+
 def test_extract_condition_block_for_below_all_conditions():
     text = """EPS shall transition from Normal state to Degraded state if below ALL conditions are met:
 S_VEHICLE_SPEED > 10kph

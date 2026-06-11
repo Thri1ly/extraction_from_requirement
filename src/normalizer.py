@@ -166,13 +166,15 @@ def normalize_entities(
     dictionary_path: str | Path | None = None,
     unknown_candidates_path: str | Path | None = None,
     requirement_id: str | None = None,
+    include_unknown_entities: bool = False,
 ) -> List[JsonDict]:
     """Normalize rule/NER entities plus mentions discovered from raw text."""
 
     if dictionary_path:
         dictionary = load_dictionary(Path(dictionary_path))
+    uses_external_dictionary = dictionary is not None or dictionary_path is not None
     dictionary_index = build_dictionary_index(dictionary or [])
-    normalized: List[JsonDict] = [] if dictionary_index else list(find_known_mentions(text))
+    normalized: List[JsonDict] = [] if uses_external_dictionary else list(find_known_mentions(text))
     unknown_candidates: List[JsonDict] = []
     for source_name, source_entities in (("rule", rule_entities or []), ("ner", ner_entities or [])):
         for entity in source_entities:
@@ -183,10 +185,12 @@ def normalize_entities(
             if item is None:
                 item = normalize_mention(mention)
                 item["type"] = normalize_entity_type(entity.get("type") or item.get("type"))
-                if dictionary is not None or dictionary_path is not None:
+                if uses_external_dictionary:
                     unknown_candidates.append(
                         build_unknown_candidate(mention, item["type"], source_name, requirement_id=requirement_id)
                     )
+                    if not include_unknown_entities:
+                        continue
             item["source"] = source_name
             normalized.append(item)
 

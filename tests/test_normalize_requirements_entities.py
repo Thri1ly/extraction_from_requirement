@@ -81,9 +81,10 @@ def test_normalize_requirements_writes_unknown_candidates_when_requested(tmp_pat
     ]
     candidates_path = tmp_path / "unknown.jsonl"
 
-    normalize_requirement_rows(requirements, dictionary=[], unknown_candidates_path=candidates_path)
+    normalized = normalize_requirement_rows(requirements, dictionary=[], unknown_candidates_path=candidates_path)
 
     rows = [json.loads(line) for line in candidates_path.read_text(encoding="utf-8").splitlines()]
+    assert normalized[0]["normalized_entities"] == []
     assert rows == [
         {
             "mention": "steering wheel torque",

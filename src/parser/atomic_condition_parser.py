@@ -29,8 +29,11 @@ OPERATOR_ALIASES = {
 }
 
 OPERATOR_PATTERN = "|".join(re.escape(operator) for operator in sorted(OPERATOR_ALIASES, key=len, reverse=True))
+STATE_COMPARISON_OPERATORS = {"==", "!="}
 SIGNAL_PATTERN = r"S_[A-Z0-9_]+|vehicle speed|Column Torque|Column Velocity|Driver Torque|assist torque|torque demand"
-VALUE_UNIT_PATTERN = r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm|rev/s)"
+SUPPORTED_UNITS = ["c-deg", "rev/s", "kph", "Nm"]
+UNIT_PATTERN = "|".join(re.escape(unit) for unit in sorted(SUPPORTED_UNITS, key=len, reverse=True))
+VALUE_UNIT_PATTERN = rf"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>{UNIT_PATTERN})"
 VALUE_ALIASES = {
     "zero": 0,
 }
@@ -48,6 +51,8 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
     conditions.extend(parse_fault_state_conditions(text))
+    conditions.extend(parse_signal_state_and_parameter_threshold_conditions(text, normalized_entities))
+    conditions.extend(parse_single_signal_parameter_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_value_state_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_state_conditions(text, normalized_entities))
@@ -157,6 +162,7 @@ def parse_bracketed_definition_conditions(text: str, normalized_entities: List[J
         if _entity_appears_in_text(definition_text, entity)
     ]
     definition_candidates = []
+    definition_candidates.extend(parse_single_signal_parameter_conditions(definition_text, definition_entities))
     definition_candidates.extend(parse_single_signal_value_conditions(definition_text, definition_entities))
     definition_candidates.extend(parse_multi_signal_value_conditions(definition_text, definition_entities))
     definition_candidates.extend(parse_signal_state_conditions(definition_text, definition_entities))
@@ -294,6 +300,8 @@ def parse_signal_state_conditions(text: str, normalized_entities: List[JsonDict]
     operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
     if not signals or not states or not operator:
         return []
+    if operator not in STATE_COMPARISON_OPERATORS:
+        return []
 
     if len(signals) > 1 or len(states) > 1:
         return [
@@ -356,6 +364,85 @@ def parse_single_signal_value_conditions(text: str, normalized_entities: List[Js
             "operator": operator,
             "value": parsed_value["value"],
             "unit": parsed_value["unit"],
+            "need_review": False,
+        }
+    ]
+
+
+def parse_signal_state_and_parameter_threshold_conditions(
+    text: str,
+    normalized_entities: List[JsonDict],
+) -> List[JsonDict]:
+    """Parse combined predicates such as S_X is valid and greater than P_MIN."""
+
+    if not normalized_entities:
+        return []
+
+    signal = _select_preferred_signal(text, _matching_entities(text, normalized_entities, "SIGNAL"))
+    states = _matching_entities(text, normalized_entities, "STATE")
+    parameters = _unique_entities_by_canonical(_matching_entities(text, normalized_entities, "PARAMETER"))
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if not signal or len(states) != 1 or len(parameters) != 1 or not operator:
+        return []
+    if operator in STATE_COMPARISON_OPERATORS:
+        return []
+
+    signal_name = str(signal.get("canonical_name") or signal.get("mention"))
+    state_name = str(states[0].get("canonical_name") or states[0].get("mention"))
+    parameter_name = str(parameters[0].get("canonical_name") or parameters[0].get("mention"))
+    signal_mention = _display_entity_mention(text, signal)
+    parameter_mention = _display_entity_mention(text, parameters[0])
+    return [
+        {
+            "type": "condition_group",
+            "logic": "AND",
+            "mention": text,
+            "children": [
+                {
+                    "type": "signal_state_condition",
+                    "mention": f"{signal_mention} == {state_name}",
+                    "signal": signal_name,
+                    "operator": "==",
+                    "required_state": state_name,
+                    "need_review": False,
+                },
+                {
+                    "type": "parameter_threshold_condition",
+                    "mention": f"{signal_mention} {operator} {parameter_mention}",
+                    "signal": signal_name,
+                    "operator": operator,
+                    "parameter": parameter_name,
+                    "need_review": False,
+                },
+            ],
+            "need_review": False,
+        }
+    ]
+
+
+def parse_single_signal_parameter_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
+    """Parse parameter thresholds such as S_X >= P_MIN_VALUE."""
+
+    if not normalized_entities:
+        return []
+
+    signal = _select_preferred_signal(text, _matching_entities(text, normalized_entities, "SIGNAL"))
+    parameters = _unique_entities_by_canonical(_matching_entities(text, normalized_entities, "PARAMETER"))
+    operator = _operator_from_entities(text, normalized_entities) or _operator_from_text(text)
+    if not signal or len(parameters) != 1 or not operator:
+        return []
+
+    signal_name = str(signal.get("canonical_name") or signal.get("mention"))
+    parameter_name = str(parameters[0].get("canonical_name") or parameters[0].get("mention"))
+    signal_mention = _display_entity_mention(text, signal)
+    parameter_mention = _display_entity_mention(text, parameters[0])
+    return [
+        {
+            "type": "parameter_threshold_condition",
+            "mention": f"{signal_mention} {operator} {parameter_mention}",
+            "signal": signal_name,
+            "operator": operator,
+            "parameter": parameter_name,
             "need_review": False,
         }
     ]
@@ -523,6 +610,35 @@ def _matching_entities(text: str, entities: List[JsonDict], entity_type: str) ->
     ]
 
 
+def _unique_entities_by_canonical(entities: List[JsonDict]) -> List[JsonDict]:
+    unique: List[JsonDict] = []
+    seen = set()
+    for entity in entities:
+        key = str(entity.get("canonical_name") or entity.get("mention") or "").upper()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(entity)
+    return unique
+
+
+def _select_preferred_signal(text: str, signals: List[JsonDict]) -> JsonDict | None:
+    unique_signals = _unique_entities_by_canonical(signals)
+    if len(unique_signals) == 1:
+        return unique_signals[0]
+
+    for bracketed_text in re.findall(r"\(([^()]*)\)", text):
+        bracketed_signals = [
+            signal
+            for signal in unique_signals
+            if _entity_appears_in_text(bracketed_text, signal)
+        ]
+        bracketed_signals = _unique_entities_by_canonical(bracketed_signals)
+        if len(bracketed_signals) == 1:
+            return bracketed_signals[0]
+    return None
+
+
 def _entity_appears_in_text(text: str, entity: JsonDict) -> bool:
     for field_name in ("mention", "canonical_name"):
         value = str(entity.get(field_name, "")).strip()
@@ -541,7 +657,7 @@ def _value_from_entity(entity: JsonDict) -> JsonDict | None:
             return {"value": VALUE_ALIASES[value_key], "unit": entity.get("unit")}
         if re.fullmatch(r"0x[0-9a-f]+", raw_value, flags=re.IGNORECASE):
             return {"value": raw_value, "unit": entity.get("unit")}
-        value_unit = re.fullmatch(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kph|Nm|rev/s)", raw_value, flags=re.IGNORECASE)
+        value_unit = re.fullmatch(VALUE_UNIT_PATTERN, raw_value, flags=re.IGNORECASE)
         if value_unit:
             return {"value": number_value(value_unit.group("value")), "unit": value_unit.group("unit")}
         if re.fullmatch(r"\d+(?:\.\d+)?", raw_value):
@@ -551,6 +667,14 @@ def _value_from_entity(entity: JsonDict) -> JsonDict | None:
 
 def _clean_braced_mention(mention: str) -> str:
     return mention.strip().strip("{}").strip()
+
+
+def _display_entity_mention(text: str, entity: JsonDict) -> str:
+    for field_name in ("mention", "canonical_name"):
+        value = str(entity.get(field_name, "")).strip()
+        if value and re.search(rf"(?<!\w){re.escape(value)}(?!\w)", text, flags=re.IGNORECASE):
+            return _clean_braced_mention(value)
+    return _clean_braced_mention(str(entity.get("mention") or entity.get("canonical_name") or ""))
 
 
 def _first_confident_definition(candidates: List[JsonDict]) -> JsonDict | None:
@@ -563,7 +687,12 @@ def _first_confident_definition(candidates: List[JsonDict]) -> JsonDict | None:
 def _definition_confidence(definition: JsonDict) -> float:
     if definition.get("need_review"):
         return 0.6
-    if definition.get("type") in {"condition_group", "threshold_condition", "signal_state_condition"}:
+    if definition.get("type") in {
+        "condition_group",
+        "threshold_condition",
+        "parameter_threshold_condition",
+        "signal_state_condition",
+    }:
         return 0.95
     return 0.75
 
@@ -598,7 +727,9 @@ def _operator_from_entities(text: str, entities: List[JsonDict]) -> str | None:
         if str(entity.get("type", "")).upper() != "OPERATOR" or not _entity_appears_in_text(text, entity):
             continue
         operator_text = str(entity.get("canonical_name") or entity.get("mention") or "").lower()
-        return OPERATOR_ALIASES.get(operator_text)
+        operator = OPERATOR_ALIASES.get(operator_text)
+        if operator:
+            return operator
     return None
 
 
