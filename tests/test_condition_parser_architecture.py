@@ -249,6 +249,58 @@ def test_parse_multi_signal_shared_value_state_label_condition_with_not_equal_op
     assert parsed["children"][3]["required_state"] == "Available"
 
 
+def test_parse_multi_signal_value_state_label_condition_with_or_logic():
+    parsed = parse_condition_line(
+        'S_VEHICLE_SPEED_1 is equal to "0x1:valid" or S_VEHICLE_SPEED_2 is equal to "0x1:valid"',
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED_1",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED_1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "S_VEHICLE_SPEED_2",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED_2",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "0x1",
+                "type": "VALUE",
+                "canonical_name": "0x1",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "valid",
+                "type": "STATE",
+                "canonical_name": "valid",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert [child["logic"] for child in parsed["children"]] == ["AND", "AND"]
+    assert [child["children"][0]["signal"] for child in parsed["children"]] == [
+        "S_VEHICLE_SPEED_1",
+        "S_VEHICLE_SPEED_2",
+    ]
+    assert [child["children"][1]["required_state"] for child in parsed["children"]] == ["valid", "valid"]
+
+
 def test_parse_single_signal_value_state_label_condition():
     parsed = parse_condition_line(
         'S_DRIVER_OVERRIDE_STATUS is equal to "0x1: Override"',
@@ -522,6 +574,527 @@ def test_parse_bracketed_signal_parameter_threshold_definition():
         "signal": "S_VEHICLE_SPEED",
         "operator": ">=",
         "parameter": "P_FD_MIN_VEH_SPD",
+        "need_review": False,
+    }
+
+
+def test_parse_signal_parameter_equal_or_greater_compound_operator():
+    parsed = parse_condition_line(
+        "S_ASSIST_CAPABILITY is equal to (and/or) greater than P_CAPABILITY_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "greater than",
+                "type": "OPERATOR",
+                "canonical_name": "greater than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_CAPABILITY_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_CAPABILITY_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_ASSIST_CAPABILITY >= P_CAPABILITY_LIMIT",
+        "signal": "S_ASSIST_CAPABILITY",
+        "operator": ">=",
+        "parameter": "P_CAPABILITY_LIMIT",
+        "need_review": False,
+    }
+
+
+def test_parse_signal_parameter_equal_or_less_compound_operator():
+    parsed = parse_condition_line(
+        "S_ASSIST_CAPABILITY is equal to or less than P_CAPABILITY_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "less than",
+                "type": "OPERATOR",
+                "canonical_name": "less than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_CAPABILITY_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_CAPABILITY_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed["operator"] == "<="
+    assert parsed["mention"] == "S_ASSIST_CAPABILITY <= P_CAPABILITY_LIMIT"
+
+
+def test_parse_abs_signal_parameter_threshold_from_text_and_transform_entity():
+    parsed = parse_condition_line(
+        "absolute {Column Torque} > P_TORQUE_THERSHOLD",
+        normalized_entities=[
+            {
+                "mention": "absolute",
+                "type": "TRANSFORM",
+                "canonical_name": "ABS",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "Column Torque",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_TORQUE",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": ">",
+                "type": "OPERATOR",
+                "canonical_name": ">",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "P_TORQUE_THERSHOLD",
+                "type": "PARAMETER",
+                "canonical_name": "P_TORQUE_THERSHOLD",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "ABS(Column Torque) > P_TORQUE_THERSHOLD",
+        "signal": "S_COLUMN_TORQUE",
+        "transform": "ABS",
+        "operator": ">",
+        "parameter": "P_TORQUE_THERSHOLD",
+        "need_review": False,
+    }
+
+
+def test_parse_bracketed_state_definition_with_abs_signal_comparison_duration():
+    parsed = parse_condition_line(
+        "A straight ahead driving condition is detected (ABS(S_YAW_RATE) <= S_YAW_RATE_LEVEL for a period of P_DURATION_TIME)",
+        normalized_entities=[
+            {
+                "mention": "straight ahead driving condition",
+                "type": "STATE",
+                "canonical_name": "StraightAheadDrivingCondition",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "detected",
+                "type": "STATE",
+                "canonical_name": "Detected",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "ABS",
+                "type": "TRANSFORM",
+                "canonical_name": "ABS",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "S_YAW_RATE",
+                "type": "SIGNAL",
+                "canonical_name": "S_YAW_RATE",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "S_YAW_RATE_LEVEL",
+                "type": "SIGNAL",
+                "canonical_name": "S_YAW_RATE_LEVEL",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "<=",
+                "type": "OPERATOR",
+                "canonical_name": "<=",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "period",
+                "type": "ATTRIBUTE",
+                "canonical_name": "period",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_DURATION_TIME",
+                "type": "PARAMETER",
+                "canonical_name": "P_DURATION_TIME",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "state_definition_condition"
+    assert parsed["state_name"] == "StraightAheadDrivingCondition"
+    assert parsed["definition"] == {
+        "type": "signal_comparison_condition",
+        "mention": "ABS(S_YAW_RATE) <= S_YAW_RATE_LEVEL for a period of P_DURATION_TIME",
+        "left_signal": "S_YAW_RATE",
+        "left_transform": "ABS",
+        "operator": "<=",
+        "right_signal": "S_YAW_RATE_LEVEL",
+        "qualifiers": [
+            {
+                "type": "duration",
+                "mention": "for a period of P_DURATION_TIME",
+                "parameter": "P_DURATION_TIME",
+            }
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_bracketed_signal_state_and_parameter_definition_as_and_group():
+    parsed = parse_condition_line(
+        "ESP capability is available (S_ASSIST_CAPABILITY is equal to or greater than P_ASSIST_LIMIT)",
+        normalized_entities=[
+            {
+                "mention": "ESP capability",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "available",
+                "type": "STATE",
+                "canonical_name": "AVAILABLE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "greater than",
+                "type": "OPERATOR",
+                "canonical_name": "greater than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": "ESP capability is available (S_ASSIST_CAPABILITY is equal to or greater than P_ASSIST_LIMIT)",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "ESP capability == AVAILABLE",
+                "signal": "S_ASSIST_CAPABILITY",
+                "operator": "==",
+                "required_state": "AVAILABLE",
+                "need_review": False,
+            },
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_ASSIST_CAPABILITY >= P_ASSIST_LIMIT",
+                "signal": "S_ASSIST_CAPABILITY",
+                "operator": ">=",
+                "parameter": "P_ASSIST_LIMIT",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_bracketed_signal_state_and_suffix_all_parameter_definition_as_and_group():
+    parsed = parse_condition_line(
+        "ESP capability is available (S_ASSIST_CAPABILITYn is equal to or greater than P_ASSIST_LIMIT)",
+        normalized_entities=[
+            {
+                "mention": "ESP capability",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": ["S_ASSIST_CAPABILITY_1", "S_ASSIST_CAPABILITY_2"],
+                "source": "ner",
+            },
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": ["S_ASSIST_CAPABILITY_1", "S_ASSIST_CAPABILITY_2"],
+                "source": "rule",
+            },
+            {
+                "mention": "available",
+                "type": "STATE",
+                "canonical_name": "AVAILABLE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "greater than",
+                "type": "OPERATOR",
+                "canonical_name": "greater than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["children"][0] == {
+        "type": "signal_state_condition",
+        "mention": "ESP capability == AVAILABLE",
+        "signal": "S_ASSIST_CAPABILITY",
+        "operator": "==",
+        "required_state": "AVAILABLE",
+        "need_review": False,
+    }
+    suffix_group = parsed["children"][1]
+    assert suffix_group == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "S_ASSIST_CAPABILITYn >= P_ASSIST_LIMIT",
+        "source_signal": "S_ASSIST_CAPABILITY",
+        "children": [
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_ASSIST_CAPABILITY_1 >= P_ASSIST_LIMIT",
+                "signal": "S_ASSIST_CAPABILITY_1",
+                "operator": ">=",
+                "parameter": "P_ASSIST_LIMIT",
+                "need_review": False,
+            },
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_ASSIST_CAPABILITY_2 >= P_ASSIST_LIMIT",
+                "signal": "S_ASSIST_CAPABILITY_2",
+                "operator": ">=",
+                "parameter": "P_ASSIST_LIMIT",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_suffix_any_parameter_threshold_condition():
+    parsed = parse_condition_line(
+        "S_ASSIST_CAPABILITYm is equal to or greater than P_ASSIST_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": ["S_ASSIST_CAPABILITY_1", "S_ASSIST_CAPABILITY_2"],
+                "source": "rule",
+            },
+            {
+                "mention": "equal to",
+                "type": "OPERATOR",
+                "canonical_name": "equal to",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "greater than",
+                "type": "OPERATOR",
+                "canonical_name": "greater than",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert parsed["quantifier"] == "ANY_ONE"
+    assert [child["signal"] for child in parsed["children"]] == [
+        "S_ASSIST_CAPABILITY_1",
+        "S_ASSIST_CAPABILITY_2",
+    ]
+
+
+def test_suffix_quantified_signal_without_members_needs_review():
+    parsed = parse_condition_line(
+        "S_ASSIST_CAPABILITYn is equal to or greater than P_ASSIST_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "S_ASSIST_CAPABILITYn >= P_ASSIST_LIMIT",
+        "source_signal": "S_ASSIST_CAPABILITY",
+        "children": [],
+        "need_review": True,
+        "review_reason": "quantified suffix signal has no members to expand",
+    }
+
+
+def test_parse_signal_value_threshold_with_duration_qualifier():
+    parsed = parse_condition_line(
+        "S_SPEED > 10kph for a period of P_DURATION_TIME",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED", "members": []},
+            {"mention": ">", "type": "OPERATOR", "canonical_name": ">", "members": []},
+            {"mention": "10kph", "type": "VALUE", "canonical_name": "10kph", "members": []},
+            {"mention": "P_DURATION_TIME", "type": "PARAMETER", "canonical_name": "P_DURATION_TIME", "members": []},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_SPEED"
+    assert parsed["value"] == 10
+    assert parsed["unit"] == "kph"
+    assert parsed["qualifiers"] == [
+        {"type": "duration", "mention": "for a period of P_DURATION_TIME", "parameter": "P_DURATION_TIME"}
+    ]
+
+
+def test_parse_signal_state_condition_with_duration_qualifier():
+    parsed = parse_condition_line(
+        "S_STATUS is equal to valid for a period of P_DURATION_TIME",
+        normalized_entities=[
+            {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS", "members": []},
+            {"mention": "equal to", "type": "OPERATOR", "canonical_name": "equal to", "members": []},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid", "members": []},
+            {"mention": "P_DURATION_TIME", "type": "PARAMETER", "canonical_name": "P_DURATION_TIME", "members": []},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_STATUS is equal to valid for a period of P_DURATION_TIME",
+        "signal": "S_STATUS",
+        "operator": "==",
+        "required_state": "valid",
+        "qualifiers": [
+            {"type": "duration", "mention": "for a period of P_DURATION_TIME", "parameter": "P_DURATION_TIME"}
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_signal_parameter_threshold_with_duration_qualifier():
+    parsed = parse_condition_line(
+        "S_SPEED > P_SPEED_LIMIT for a period of P_DURATION_TIME",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED", "members": []},
+            {"mention": ">", "type": "OPERATOR", "canonical_name": ">", "members": []},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT", "members": []},
+            {"mention": "P_DURATION_TIME", "type": "PARAMETER", "canonical_name": "P_DURATION_TIME", "members": []},
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_SPEED > P_SPEED_LIMIT",
+        "signal": "S_SPEED",
+        "operator": ">",
+        "parameter": "P_SPEED_LIMIT",
+        "qualifiers": [
+            {"type": "duration", "mention": "for a period of P_DURATION_TIME", "parameter": "P_DURATION_TIME"}
+        ],
         "need_review": False,
     }
 
