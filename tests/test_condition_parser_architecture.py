@@ -46,6 +46,190 @@ def test_parse_signal_state_condition_from_normalized_entities():
     }
 
 
+def test_parse_signal_is_state_condition_without_explicit_operator():
+    parsed = parse_condition_line(
+        "Column Torque validity signal is invalid",
+        normalized_entities=[
+            {
+                "mention": "Column Torque validity signal",
+                "type": "SIGNAL",
+                "canonical_name": "S_COLUMN_TORQUE_QF",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "invalid",
+                "type": "STATE",
+                "canonical_name": "invalid",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "Column Torque validity signal is invalid",
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "invalid",
+        "need_review": False,
+    }
+
+
+def test_parse_single_signal_multi_state_or_condition():
+    parsed = parse_condition_line(
+        "EPS system state is {LIMP HOME} or {LIMP ASIDE} or {INOPERATIVE}",
+        normalized_entities=[
+            {
+                "mention": "EPS system state",
+                "type": "SIGNAL",
+                "canonical_name": "S_EPS_SYSTEM_STATE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "LIMP HOME",
+                "type": "STATE",
+                "canonical_name": "LIMP_HOME",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "LIMP ASIDE",
+                "type": "STATE",
+                "canonical_name": "LIMP_ASIDE",
+                "members": [],
+                "source": "ner",
+            },
+            {
+                "mention": "INOPERATIVE",
+                "type": "STATE",
+                "canonical_name": "INOPERATIVE",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "OR",
+        "mention": "EPS system state is {LIMP HOME} or {LIMP ASIDE} or {INOPERATIVE}",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "EPS system state == LIMP_HOME",
+                "signal": "S_EPS_SYSTEM_STATE",
+                "operator": "==",
+                "required_state": "LIMP_HOME",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "EPS system state == LIMP_ASIDE",
+                "signal": "S_EPS_SYSTEM_STATE",
+                "operator": "==",
+                "required_state": "LIMP_ASIDE",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "EPS system state == INOPERATIVE",
+                "signal": "S_EPS_SYSTEM_STATE",
+                "operator": "==",
+                "required_state": "INOPERATIVE",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_multi_signal_single_state_and_condition():
+    parsed = parse_condition_line(
+        "S_SIG_1, S_SIG_2, S_SIG_3 and S_SIG_4 are invalid",
+        normalized_entities=[
+            {
+                "mention": "S_SIG_1",
+                "type": "SIGNAL",
+                "canonical_name": "S_SIG_1",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "S_SIG_2",
+                "type": "SIGNAL",
+                "canonical_name": "S_SIG_2",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "S_SIG_3",
+                "type": "SIGNAL",
+                "canonical_name": "S_SIG_3",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "S_SIG_4",
+                "type": "SIGNAL",
+                "canonical_name": "S_SIG_4",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "invalid",
+                "type": "STATE",
+                "canonical_name": "invalid",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": "S_SIG_1, S_SIG_2, S_SIG_3 and S_SIG_4 are invalid",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "S_SIG_1 == invalid",
+                "signal": "S_SIG_1",
+                "operator": "==",
+                "required_state": "invalid",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_SIG_2 == invalid",
+                "signal": "S_SIG_2",
+                "operator": "==",
+                "required_state": "invalid",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_SIG_3 == invalid",
+                "signal": "S_SIG_3",
+                "operator": "==",
+                "required_state": "invalid",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_SIG_4 == invalid",
+                "signal": "S_SIG_4",
+                "operator": "==",
+                "required_state": "invalid",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
 def test_parse_multi_signal_shared_zero_value_condition():
     parsed = parse_condition_line(
         "{Column Torque} and {Column Velocity} are equal to zero",
@@ -107,6 +291,70 @@ def test_parse_multi_signal_shared_zero_value_condition():
                 "need_review": False,
             },
         ],
+        "need_review": False,
+    }
+
+
+def test_parse_signal_is_value_condition_without_explicit_operator():
+    parsed = parse_condition_line(
+        "S_STATUS is zero",
+        normalized_entities=[
+            {
+                "mention": "S_STATUS",
+                "type": "SIGNAL",
+                "canonical_name": "S_STATUS",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "zero",
+                "type": "VALUE",
+                "canonical_name": "0",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "threshold_condition",
+        "mention": "S_STATUS == 0",
+        "signal": "S_STATUS",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": None,
+        "need_review": False,
+    }
+
+
+def test_parse_signal_is_parameter_condition_without_explicit_operator():
+    parsed = parse_condition_line(
+        "S_SPEED is P_SPEED_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_SPEED",
+                "members": [],
+                "source": "rule",
+            },
+            {
+                "mention": "P_SPEED_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_SPEED_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_SPEED == P_SPEED_LIMIT",
+        "signal": "S_SPEED",
+        "operator": "==",
+        "parameter": "P_SPEED_LIMIT",
         "need_review": False,
     }
 
@@ -1282,6 +1530,55 @@ def test_parse_both_of_signal_members_are_valid():
                 "signal": "S_VEHICLE_SPEED_2",
                 "operator": "==",
                 "required_state": "valid",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_both_of_the_natural_signal_members_are_invalid():
+    parsed = parse_condition_line(
+        "both of the vehicle speed signal are invalid",
+        normalized_entities=[
+            {
+                "mention": "vehicle speed signal",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "ner",
+            },
+            {
+                "mention": "invalid",
+                "type": "STATE",
+                "canonical_name": "invalid",
+                "members": [],
+                "source": "ner",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "both of the vehicle speed signal are invalid",
+        "source_signal": "S_VEHICLE_SPEED",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "S_VEHICLE_SPEED_1 == invalid",
+                "signal": "S_VEHICLE_SPEED_1",
+                "operator": "==",
+                "required_state": "invalid",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_VEHICLE_SPEED_2 == invalid",
+                "signal": "S_VEHICLE_SPEED_2",
+                "operator": "==",
+                "required_state": "invalid",
                 "need_review": False,
             },
         ],
