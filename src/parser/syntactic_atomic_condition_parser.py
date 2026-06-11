@@ -87,7 +87,15 @@ def _parse_single_signal_multi_right(
         return []
 
     signal = placeholder_map[signals[0]]["entity"]
-    children = [_condition_for_right_entity(original_text, signal, placeholder_map[right]["entity"]) for right in ordered_rights]
+    children = [
+        _condition_for_right_entity(
+            original_text,
+            signal,
+            placeholder_map[right]["entity"],
+            operator=_operator_for_right_placeholder(placeholder_text, signals[0], ordered_rights, right),
+        )
+        for right in ordered_rights
+    ]
     if any(child is None for child in children):
         return []
 
@@ -119,8 +127,9 @@ def _parse_multi_signal_single_right(
         return []
 
     right_entity = placeholder_map[right_entities[0]]["entity"]
+    operator = _operator_for_right_placeholder(placeholder_text, ordered_signals[-1], right_entities, right_entities[0])
     children = [
-        _condition_for_right_entity(original_text, placeholder_map[signal]["entity"], right_entity)
+        _condition_for_right_entity(original_text, placeholder_map[signal]["entity"], right_entity, operator=operator)
         for signal in ordered_signals
     ]
     if any(child is None for child in children):
@@ -154,6 +163,7 @@ def _parse_single_signal_single_right(
         original_text,
         placeholder_map[signals[0]]["entity"],
         placeholder_map[right_entities[0]]["entity"],
+        operator=_operator_for_right_placeholder(placeholder_text, signals[0], right_entities, right_entities[0]),
     )
     if not condition:
         return []
@@ -161,11 +171,15 @@ def _parse_single_signal_single_right(
     return [condition]
 
 
-def _condition_for_right_entity(original_text: str, signal: JsonDict, right_entity: JsonDict) -> JsonDict | None:
+def _condition_for_right_entity(
+    original_text: str,
+    signal: JsonDict,
+    right_entity: JsonDict,
+    operator: str = "==",
+) -> JsonDict | None:
     signal_name = str(signal.get("canonical_name") or signal.get("mention"))
     signal_mention = _display_entity_mention(original_text, signal)
     right_type = str(right_entity.get("type", "")).upper()
-    operator = "=="
 
     if right_type == "STATE":
         required_state = str(right_entity.get("canonical_name") or right_entity.get("mention"))
@@ -295,6 +309,37 @@ def _has_relation_between(text: str, left_placeholder: str, right_placeholder: s
     if right_start <= left_end:
         return False
     return bool(RELATION_PATTERN.search(text[left_end:right_start]))
+
+
+def _operator_for_right_placeholder(
+    text: str,
+    signal_placeholder: str,
+    ordered_rights: List[str],
+    right_placeholder: str,
+) -> str:
+    right_index = ordered_rights.index(right_placeholder)
+    if right_index == 0:
+        left_boundary = text.find(signal_placeholder) + len(signal_placeholder)
+    else:
+        previous_right = ordered_rights[right_index - 1]
+        left_boundary = text.find(previous_right) + len(previous_right)
+    right_start = text.find(right_placeholder)
+    if right_start <= left_boundary:
+        return "=="
+
+    local_text = text[left_boundary:right_start]
+    operator = _operator_from_text(local_text)
+    if operator:
+        return operator
+    return "=="
+
+
+def _operator_from_text(text: str) -> str | None:
+    aliases = sorted(OPERATOR_ALIASES, key=len, reverse=True)
+    for alias in aliases:
+        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, flags=re.IGNORECASE):
+            return OPERATOR_ALIASES[alias]
+    return None
 
 
 def _entity_span(text: str, entity: JsonDict) -> tuple[int, int] | None:

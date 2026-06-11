@@ -56,6 +56,44 @@ def test_syntactic_parser_expands_multi_signal_single_state_with_shall_be():
     assert all(child["required_state"] == "invalid" for child in parsed["children"])
 
 
+def test_syntactic_parser_uses_local_operator_for_state_and_parameter_condition():
+    parsed = parse_condition_line(
+        "K Factor (S_K_FACTOR_REQUEST) is valid and greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_K_FACTOR_REQUEST", "type": "SIGNAL", "canonical_name": "S_K_FACTOR_REQUEST"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+            {"mention": "greater than", "type": "OPERATOR", "canonical_name": ">"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": "K Factor (S_K_FACTOR_REQUEST) is valid and greater than P_LIMIT",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "S_K_FACTOR_REQUEST == valid",
+                "signal": "S_K_FACTOR_REQUEST",
+                "operator": "==",
+                "required_state": "valid",
+                "need_review": False,
+            },
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_K_FACTOR_REQUEST > P_LIMIT",
+                "signal": "S_K_FACTOR_REQUEST",
+                "operator": ">",
+                "parameter": "P_LIMIT",
+                "need_review": False,
+            },
+        ],
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
 def test_syntactic_parser_falls_back_to_legacy_threshold_parser():
     parsed = parse_condition_line(
         "S_SPEED > 10kph",
