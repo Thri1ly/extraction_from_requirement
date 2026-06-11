@@ -50,6 +50,7 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_state_definition_conditions(text))
     conditions.extend(parse_range_conditions(text))
     conditions.extend(parse_redundant_signal_validity(text))
+    conditions.extend(parse_quantified_signal_member_state_conditions(text, normalized_entities))
     conditions.extend(parse_fault_state_conditions(text))
     conditions.extend(parse_signal_state_and_parameter_threshold_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_parameter_conditions(text, normalized_entities))
@@ -221,6 +222,63 @@ def parse_redundant_signal_validity(text: str) -> List[JsonDict]:
                 }
             )
     return conditions
+
+
+def parse_quantified_signal_member_state_conditions(
+    text: str,
+    normalized_entities: List[JsonDict],
+) -> List[JsonDict]:
+    """Parse both/all/one-of quantified state checks over signal members."""
+
+    if not normalized_entities:
+        return []
+
+    for signal in _matching_expandable_signals(text, normalized_entities):
+        match = _quantified_signal_state_match(text, signal)
+        if not match:
+            continue
+
+        quantifier, logic = _quantifier_logic(match.group("quantifier"))
+        state = match.group("state").strip()
+        source_signal = str(signal.get("canonical_name") or signal.get("mention"))
+        members = [str(member) for member in signal.get("members", []) if str(member).strip()]
+        if not members:
+            return [
+                {
+                    "type": "condition_group",
+                    "logic": logic,
+                    "quantifier": quantifier,
+                    "mention": match.group(0),
+                    "source_signal": source_signal,
+                    "children": [],
+                    "need_review": True,
+                    "review_reason": "quantified signal has no members to expand",
+                }
+            ]
+
+        return [
+            {
+                "type": "condition_group",
+                "logic": logic,
+                "quantifier": quantifier,
+                "mention": match.group(0),
+                "source_signal": source_signal,
+                "children": [
+                    {
+                        "type": "signal_state_condition",
+                        "mention": f"{member} == {state}",
+                        "signal": member,
+                        "operator": "==",
+                        "required_state": state,
+                        "need_review": False,
+                    }
+                    for member in members
+                ],
+                "need_review": False,
+            }
+        ]
+
+    return []
 
 
 def parse_range_conditions(text: str) -> List[JsonDict]:
@@ -608,6 +666,56 @@ def _matching_entities(text: str, entities: List[JsonDict], entity_type: str) ->
         for entity in entities
         if str(entity.get("type", "")).upper() == entity_type and _entity_appears_in_text(text, entity)
     ]
+
+
+def _matching_expandable_signals(text: str, entities: List[JsonDict]) -> List[JsonDict]:
+    signals = [
+        entity
+        for entity in entities
+        if str(entity.get("type", "")).upper() in {"SIGNAL", "SIGNAL_GROUP"}
+        and _entity_appears_in_text(text, entity)
+    ]
+    return _unique_entities_by_canonical(signals)
+
+
+def _quantified_signal_state_match(text: str, signal: JsonDict) -> re.Match[str] | None:
+    signal_pattern = _entity_alias_pattern(signal)
+    if not signal_pattern:
+        return None
+    quantifier_pattern = (
+        r"(?P<quantifier>"
+        r"both(?:\s+(?:of|lanes?(?:\s+of)?))?|"
+        r"all(?:\s+(?:of|lanes?(?:\s+of)?))?|"
+        r"one\s+(?:of|lanes?(?:\s+of)?)|"
+        r"any(?:\s+(?:one\s+of|of|lanes?(?:\s+of)?))"
+        r")"
+    )
+    pattern = re.compile(
+        rf"\b{quantifier_pattern}\s+{signal_pattern}\s+(?:is|are)\s+"
+        r"(?P<state>not\s+valid|valid|invalid|active|inactive|available|unavailable|full)\b",
+        flags=re.IGNORECASE,
+    )
+    return pattern.search(text)
+
+
+def _entity_alias_pattern(entity: JsonDict) -> str:
+    aliases = []
+    for field_name in ("mention", "canonical_name"):
+        value = str(entity.get(field_name, "")).strip()
+        if value:
+            aliases.append(value)
+    unique_aliases = sorted(set(aliases), key=len, reverse=True)
+    if not unique_aliases:
+        return ""
+    alternatives = "|".join(rf"(?:{re.escape(alias)})" for alias in unique_aliases)
+    return rf"(?:{alternatives})"
+
+
+def _quantifier_logic(quantifier_text: str) -> tuple[str, str]:
+    normalized = re.sub(r"\s+", " ", quantifier_text.strip().lower())
+    if normalized.startswith(("both", "all")):
+        return "ALL", "AND"
+    return "ANY_ONE", "OR"
 
 
 def _unique_entities_by_canonical(entities: List[JsonDict]) -> List[JsonDict]:

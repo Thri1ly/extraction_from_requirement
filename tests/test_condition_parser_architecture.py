@@ -674,6 +674,193 @@ def test_parse_entity_value_condition_with_c_deg_unit():
     }
 
 
+def test_parse_both_of_signal_members_are_valid():
+    parsed = parse_condition_line(
+        "both of S_VEHICLE_SPEED are valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "both of S_VEHICLE_SPEED are valid",
+        "source_signal": "S_VEHICLE_SPEED",
+        "children": [
+            {
+                "type": "signal_state_condition",
+                "mention": "S_VEHICLE_SPEED_1 == valid",
+                "signal": "S_VEHICLE_SPEED_1",
+                "operator": "==",
+                "required_state": "valid",
+                "need_review": False,
+            },
+            {
+                "type": "signal_state_condition",
+                "mention": "S_VEHICLE_SPEED_2 == valid",
+                "signal": "S_VEHICLE_SPEED_2",
+                "operator": "==",
+                "required_state": "valid",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_parse_both_lanes_of_signal_members_are_valid():
+    parsed = parse_condition_line(
+        "both lanes of S_VEHICLE_SPEED are valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["quantifier"] == "ALL"
+    assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
+
+
+def test_parse_both_lane_signal_members_are_valid_without_of():
+    parsed = parse_condition_line(
+        "both lane S_VEHICLE_SPEED are valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["quantifier"] == "ALL"
+    assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
+
+
+def test_parse_both_lanes_signal_members_are_valid_without_of():
+    parsed = parse_condition_line(
+        "both lanes S_VEHICLE_SPEED are valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["quantifier"] == "ALL"
+    assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
+
+
+def test_parse_both_signal_members_are_invalid():
+    parsed = parse_condition_line(
+        "both S_VEHICLE_SPEED are invalid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["logic"] == "AND"
+    assert parsed["quantifier"] == "ALL"
+    assert [child["required_state"] for child in parsed["children"]] == ["invalid", "invalid"]
+
+
+def test_parse_one_lane_of_signal_member_is_valid():
+    parsed = parse_condition_line(
+        "one lane of S_VEHICLE_SPEED is valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert parsed["quantifier"] == "ANY_ONE"
+    assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
+
+
+def test_parse_one_lane_signal_member_is_valid_without_of():
+    parsed = parse_condition_line(
+        "one lane S_VEHICLE_SPEED is valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert parsed["quantifier"] == "ANY_ONE"
+    assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
+
+
+def test_quantified_signal_without_members_needs_review():
+    parsed = parse_condition_line(
+        "both of S_VEHICLE_SPEED are valid",
+        normalized_entities=[
+            {
+                "mention": "S_VEHICLE_SPEED",
+                "type": "SIGNAL",
+                "canonical_name": "S_VEHICLE_SPEED",
+                "members": [],
+                "source": "rule",
+            }
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "both of S_VEHICLE_SPEED are valid",
+        "source_signal": "S_VEHICLE_SPEED",
+        "children": [],
+        "need_review": True,
+        "review_reason": "quantified signal has no members to expand",
+    }
+
+
 def test_extract_condition_block_for_below_all_conditions():
     text = """EPS shall transition from Normal state to Degraded state if below ALL conditions are met:
 S_VEHICLE_SPEED > 10kph
