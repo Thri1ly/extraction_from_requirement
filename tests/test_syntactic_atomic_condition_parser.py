@@ -1,4 +1,4 @@
-from src.parser.syntactic_atomic_condition_parser import parse_condition_line
+from src.parser.syntactic_atomic_condition_parser import build_syntax_analysis, parse_condition_line
 
 
 def test_syntactic_parser_expands_single_signal_multi_state_with_shall_be():
@@ -92,6 +92,37 @@ def test_syntactic_parser_uses_local_operator_for_state_and_parameter_condition(
         "parser": "syntactic",
         "need_review": False,
     }
+
+
+def test_syntactic_parser_treats_is_not_as_not_equal_for_state_value_and_parameter():
+    state_condition = parse_condition_line(
+        "S_STATUS is not valid",
+        normalized_entities=[
+            {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+    value_condition = parse_condition_line(
+        "S_MODE is not 0x1",
+        normalized_entities=[
+            {"mention": "S_MODE", "type": "SIGNAL", "canonical_name": "S_MODE"},
+            {"mention": "0x1", "type": "VALUE", "canonical_name": "0x1"},
+        ],
+    )
+    parameter_condition = parse_condition_line(
+        "S_SPEED is not P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert state_condition["operator"] == "!="
+    assert state_condition["required_state"] == "valid"
+    assert value_condition["operator"] == "!="
+    assert value_condition["value"] == "0x1"
+    assert parameter_condition["operator"] == "!="
+    assert parameter_condition["parameter"] == "P_SPEED_LIMIT"
 
 
 def test_syntactic_parser_expands_at_least_one_signal_members_state_condition():
@@ -345,6 +376,365 @@ def test_syntactic_parser_parses_or_signal_value_state_clauses():
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_value_signal_value_range_condition():
+    parsed = parse_condition_line(
+        "0 < S_SPEED < 100",
+        normalized_entities=[
+            {"mention": "0", "type": "VALUE", "canonical_name": "0"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "100", "type": "VALUE", "canonical_name": "100"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "0 < S_SPEED < 100",
+        "signal": "S_SPEED",
+        "lower_operator": ">",
+        "lower_value": 0,
+        "upper_operator": "<",
+        "upper_value": 100,
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_parameter_signal_parameter_range_condition():
+    parsed = parse_condition_line(
+        "P_MIN <= S_SPEED <= P_MAX",
+        normalized_entities=[
+            {"mention": "P_MIN", "type": "PARAMETER", "canonical_name": "P_MIN"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "P_MAX", "type": "PARAMETER", "canonical_name": "P_MAX"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "P_MIN <= S_SPEED <= P_MAX",
+        "signal": "S_SPEED",
+        "lower_operator": ">=",
+        "lower_parameter": "P_MIN",
+        "upper_operator": "<=",
+        "upper_parameter": "P_MAX",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_reversed_value_signal_value_range_condition():
+    parsed = parse_condition_line(
+        "100 >= S_SPEED >= 0",
+        normalized_entities=[
+            {"mention": "100", "type": "VALUE", "canonical_name": "100"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "0", "type": "VALUE", "canonical_name": "0"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "100 >= S_SPEED >= 0",
+        "signal": "S_SPEED",
+        "lower_operator": ">=",
+        "lower_value": 0,
+        "upper_operator": "<=",
+        "upper_value": 100,
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_reversed_parameter_signal_parameter_range_condition():
+    parsed = parse_condition_line(
+        "P_MAX > S_SPEED > P_MIN",
+        normalized_entities=[
+            {"mention": "P_MAX", "type": "PARAMETER", "canonical_name": "P_MAX"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "P_MIN", "type": "PARAMETER", "canonical_name": "P_MIN"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "P_MAX > S_SPEED > P_MIN",
+        "signal": "S_SPEED",
+        "lower_operator": ">",
+        "lower_parameter": "P_MIN",
+        "upper_operator": "<",
+        "upper_parameter": "P_MAX",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_mixed_reversed_range_condition():
+    parsed = parse_condition_line(
+        "P_MAX >= S_SPEED > 0",
+        normalized_entities=[
+            {"mention": "P_MAX", "type": "PARAMETER", "canonical_name": "P_MAX"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "0", "type": "VALUE", "canonical_name": "0"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "P_MAX >= S_SPEED > 0",
+        "signal": "S_SPEED",
+        "lower_operator": ">",
+        "lower_value": 0,
+        "upper_operator": "<=",
+        "upper_parameter": "P_MAX",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_placeholderizes_repeated_same_value_mentions():
+    analysis = build_syntax_analysis(
+        "assist capability is zero (S_ASSIST_CAPABILITY is equal to zero)",
+        [
+            {"mention": "assist capability", "type": "SIGNAL", "canonical_name": "S_ASSIST_CAPABILITY"},
+            {"mention": "S_ASSIST_CAPABILITY", "type": "SIGNAL", "canonical_name": "S_ASSIST_CAPABILITY"},
+            {"mention": "zero", "type": "VALUE", "canonical_name": "0"},
+        ],
+    )
+
+    assert analysis["placeholder_text"] == "SIGNAL_1 is VALUE_1 (SIGNAL_2 is equal to VALUE_2)"
+
+
+def test_syntactic_parser_prefers_explicit_parenthesized_signal_value_definition():
+    parsed = parse_condition_line(
+        "assist capability is zero (S_ASSIST_CAPABILITY is equal to zero)",
+        normalized_entities=[
+            {"mention": "assist capability", "type": "SIGNAL", "canonical_name": "S_ASSIST_CAPABILITY"},
+            {"mention": "S_ASSIST_CAPABILITY", "type": "SIGNAL", "canonical_name": "S_ASSIST_CAPABILITY"},
+            {"mention": "zero", "type": "VALUE", "canonical_name": "0"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "threshold_condition",
+        "mention": "S_ASSIST_CAPABILITY == 0",
+        "signal": "S_ASSIST_CAPABILITY",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": None,
+        "parser": "syntactic",
+        "confidence": {
+            "overall": 0.95,
+            "structure": 0.95,
+            "normalization": 0.95,
+        },
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_placeholderizes_repeated_same_state_mentions():
+    analysis = build_syntax_analysis(
+        "column torque quality is invalid (S_COLUMN_TORQUE_QF is invalid)",
+        [
+            {"mention": "column torque quality", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert analysis["placeholder_text"] == "SIGNAL_1 is STATE_1 (SIGNAL_2 is STATE_2)"
+
+
+def test_syntactic_parser_prefers_explicit_parenthesized_signal_state_definition():
+    parsed = parse_condition_line(
+        "column torque quality is invalid (S_COLUMN_TORQUE_QF is invalid)",
+        normalized_entities=[
+            {"mention": "column torque quality", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_COLUMN_TORQUE_QF == invalid",
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "invalid",
+        "parser": "syntactic",
+        "confidence": {
+            "overall": 0.95,
+            "structure": 0.95,
+            "normalization": 0.95,
+        },
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_predicateless_signal_state_condition():
+    parsed = parse_condition_line(
+        "S_COLUMN_TORQUE_QF invalid",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_COLUMN_TORQUE_QF == invalid",
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "invalid",
+        "parser": "syntactic",
+        "confidence": {
+            "overall": 0.8,
+            "structure": 0.8,
+            "normalization": 0.9,
+        },
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_parenthesized_signal_state_without_predicate():
+    parsed = parse_condition_line(
+        "Column Torque QF (S_COLUMN_TORQUE_QF) invalid",
+        normalized_entities=[
+            {"mention": "Column Torque QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_COLUMN_TORQUE_QF == invalid",
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "invalid",
+        "parser": "syntactic",
+        "confidence": {
+            "overall": 0.9,
+            "structure": 0.9,
+            "normalization": 0.95,
+        },
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_parenthesized_signal_state_with_predicate():
+    parsed = parse_condition_line(
+        "LDW request (S_LDW_HAPTIC_AVL) is Available",
+        normalized_entities=[
+            {"mention": "LDW request", "type": "SIGNAL", "canonical_name": "S_LDW_HAPTIC_AVL"},
+            {"mention": "S_LDW_HAPTIC_AVL", "type": "SIGNAL", "canonical_name": "S_LDW_HAPTIC_AVL"},
+            {"mention": "Available", "type": "STATE", "canonical_name": "Available"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_LDW_HAPTIC_AVL == Available",
+        "signal": "S_LDW_HAPTIC_AVL",
+        "operator": "==",
+        "required_state": "Available",
+        "parser": "syntactic",
+        "confidence": {
+            "overall": 0.93,
+            "structure": 0.93,
+            "normalization": 0.95,
+        },
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_component_state_condition():
+    parsed = parse_condition_line(
+        "EPS is in Degraded",
+        normalized_entities=[
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+            {"mention": "Degraded", "type": "STATE", "canonical_name": "Degraded"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "component_state_condition",
+        "mention": "EPS == Degraded",
+        "component": "EPS",
+        "operator": "==",
+        "required_state": "Degraded",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_expands_quantified_component_members_state_condition():
+    parsed = parse_condition_line(
+        "one of the steering channels is Active",
+        normalized_entities=[
+            {
+                "mention": "steering channels",
+                "type": "COMPONENT",
+                "canonical_name": "STEERING_CHANNEL",
+                "members": ["LEFT_STEERING_CHANNEL", "RIGHT_STEERING_CHANNEL"],
+            },
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "OR",
+        "quantifier": "ANY_ONE",
+        "mention": "one of the steering channels is Active",
+        "source_component": "STEERING_CHANNEL",
+        "children": [
+            {
+                "type": "component_state_condition",
+                "mention": "LEFT_STEERING_CHANNEL == Active",
+                "component": "LEFT_STEERING_CHANNEL",
+                "operator": "==",
+                "required_state": "Active",
+                "need_review": False,
+            },
+            {
+                "type": "component_state_condition",
+                "mention": "RIGHT_STEERING_CHANNEL == Active",
+                "component": "RIGHT_STEERING_CHANNEL",
+                "operator": "==",
+                "required_state": "Active",
+                "need_review": False,
+            },
+        ],
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_fault_in_component_condition():
+    parsed = parse_condition_line(
+        "DEM_COLUMN_TORQUE_IMPLAUSIBLE in EPS",
+        normalized_entities=[
+            {
+                "mention": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+                "type": "FAULT",
+                "canonical_name": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+            },
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "fault_component_condition",
+        "mention": "DEM_COLUMN_TORQUE_IMPLAUSIBLE in EPS",
+        "fault": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+        "component": "EPS",
+        "relation": "in",
         "parser": "syntactic",
         "need_review": False,
     }

@@ -75,7 +75,7 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
     assert "- Parsed without review: 1" in report
     assert "- Parsed with review: 1" in report
     assert "- Unparsed: 1" in report
-    assert "- Average overall confidence: 0.63" in report
+    assert "- Average overall confidence: 0.50" in report
     assert "REQ_REVIEW" in report
     assert "state_definition_condition" in report
 

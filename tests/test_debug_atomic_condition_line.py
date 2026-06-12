@@ -141,6 +141,37 @@ def test_debug_atomic_condition_line_outputs_confidence_for_unclear_named_defini
         "state_name": 0.45,
         "definition": 0.95,
     }
-    assert result["parse_confidence"] == parsed["confidence"]
+    assert result["parse_confidence"] == {
+        "overall": 0.4,
+        "parser": 0.78,
+        "normalization": 0.4,
+    }
     assert parsed["need_review"] is True
     assert parsed["review_reason"] == "state name inferred from unclear natural-language description"
+
+
+def test_debug_atomic_condition_line_keeps_dictionary_misses_and_lowers_confidence(tmp_path):
+    dictionary = tmp_path / "dictionary.json"
+    dictionary.write_text(json.dumps({"entities": []}, ensure_ascii=False), encoding="utf-8")
+
+    result = debug_atomic_condition_line(
+        "S_UNKNOWN_STATUS is valid",
+        [
+            {"mention": "S_UNKNOWN_STATUS", "type": "SIGNAL"},
+            {"mention": "valid", "type": "STATE"},
+        ],
+        dictionary,
+        requirement_id="DEBUG_UNKNOWN",
+        atomic_parser="syntactic",
+    )
+
+    by_mention = {entity["mention"]: entity for entity in result["normalized_entities"]}
+    assert by_mention["S_UNKNOWN_STATUS"]["dictionary_match"] is False
+    assert by_mention["valid"]["dictionary_match"] is False
+    assert result["parsed"]["type"] == "signal_state_condition"
+    assert result["parsed"]["signal"] == "S_UNKNOWN_STATUS"
+    assert result["parse_confidence"] == {
+        "overall": 0.4,
+        "parser": 0.9,
+        "normalization": 0.4,
+    }

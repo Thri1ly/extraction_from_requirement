@@ -48,7 +48,7 @@ def debug_atomic_condition_line(
         "atomic_parser": atomic_parser,
         "input_entities": list(entities),
         "normalized_entities": normalized_entities,
-        "parse_confidence": parse_confidence(parsed),
+        "parse_confidence": parse_confidence(parsed, normalized_entities),
         "parsed": parsed,
     }
     if atomic_parser == "syntactic":
@@ -66,15 +66,36 @@ def resolve_atomic_parser(parser_name: str):
         raise ValueError(f"Unknown atomic parser '{parser_name}'. Expected one of: {choices}") from exc
 
 
-def parse_confidence(parsed: JsonDict) -> JsonDict:
+def parse_confidence(parsed: JsonDict, normalized_entities: Sequence[JsonDict] | None = None) -> JsonDict:
     """Return a debug-friendly confidence summary for the parsed condition."""
 
     confidence = parsed.get("confidence")
     if isinstance(confidence, dict):
-        return dict(confidence)
-    if parsed.get("need_review"):
-        return {"overall": 0.2}
-    return {"overall": 0.9}
+        parser_confidence = float(confidence.get("overall", 0.9))
+    elif parsed.get("need_review"):
+        parser_confidence = 0.2
+    else:
+        parser_confidence = 0.9
+
+    normalization_confidence = min(
+        (
+            float(entity.get("normalization_confidence", 1.0))
+            for entity in (normalized_entities or [])
+        ),
+        default=1.0,
+    )
+    overall = round(min(parser_confidence, normalization_confidence), 2)
+    if normalization_confidence < 1.0:
+        return {
+            "overall": overall,
+            "parser": round(parser_confidence, 2),
+            "normalization": round(normalization_confidence, 2),
+        }
+    if isinstance(confidence, dict):
+        result = dict(confidence)
+        result["overall"] = overall
+        return result
+    return {"overall": overall}
 
 
 def load_entities(entities_json: str | None = None, entities_file: Path | None = None) -> List[JsonDict]:

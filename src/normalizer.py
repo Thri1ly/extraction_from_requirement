@@ -127,6 +127,8 @@ def normalize_mention_with_dictionary(
         "canonical_name": str(entity.get("canonical_name", mention)),
         "members": list(entity.get("members", [])),
         "source": source,
+        "dictionary_match": True,
+        "normalization_confidence": 1.0,
     }
     for field_name in ("unit", "component", "description"):
         if entity.get(field_name):
@@ -166,7 +168,7 @@ def normalize_entities(
     dictionary_path: str | Path | None = None,
     unknown_candidates_path: str | Path | None = None,
     requirement_id: str | None = None,
-    include_unknown_entities: bool = False,
+    include_unknown_entities: bool = True,
 ) -> List[JsonDict]:
     """Normalize rule/NER entities plus mentions discovered from raw text."""
 
@@ -191,6 +193,14 @@ def normalize_entities(
                     )
                     if not include_unknown_entities:
                         continue
+                    item.update(
+                        {
+                            "dictionary_match": False,
+                            "normalization_confidence": 0.4,
+                            "need_review": True,
+                            "review_reason": "entity was not found in dictionary",
+                        }
+                    )
             item["source"] = source_name
             normalized.append(item)
 

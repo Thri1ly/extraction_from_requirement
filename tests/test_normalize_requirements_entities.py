@@ -84,7 +84,19 @@ def test_normalize_requirements_writes_unknown_candidates_when_requested(tmp_pat
     normalized = normalize_requirement_rows(requirements, dictionary=[], unknown_candidates_path=candidates_path)
 
     rows = [json.loads(line) for line in candidates_path.read_text(encoding="utf-8").splitlines()]
-    assert normalized[0]["normalized_entities"] == []
+    assert normalized[0]["normalized_entities"] == [
+        {
+            "mention": "steering wheel torque",
+            "type": "SIGNAL",
+            "canonical_name": "steering wheel torque",
+            "members": [],
+            "source": "ner",
+            "dictionary_match": False,
+            "normalization_confidence": 0.4,
+            "need_review": True,
+            "review_reason": "entity was not found in dictionary",
+        }
+    ]
     assert rows == [
         {
             "mention": "steering wheel torque",
