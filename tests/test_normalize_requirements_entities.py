@@ -36,6 +36,38 @@ def test_normalize_entities_uses_external_dictionary():
     assert by_mention["MIL"]["type"] == "INDICATOR"
 
 
+def test_normalize_entities_matches_dictionary_for_braced_mentions():
+    dictionary = [
+        {
+            "canonical_name": "S_COLUMN_TORQUE",
+            "type": "SIGNAL",
+            "aliases": ["Column Torque"],
+            "members": [],
+        },
+        {
+            "canonical_name": "EPS",
+            "type": "COMPONENT",
+            "aliases": ["EPS"],
+            "members": [],
+        },
+    ]
+
+    normalized = normalize_entities(
+        "{Column Torque} is greater than 5Nm when {EPS} is Active.",
+        rule_entities=[
+            {"mention": "{Column Torque}", "type": "SIGNAL"},
+            {"mention": "{EPS}", "type": "COMPONENT"},
+        ],
+        dictionary=dictionary,
+    )
+
+    by_mention = {entity["mention"]: entity for entity in normalized}
+    assert by_mention["Column Torque"]["canonical_name"] == "S_COLUMN_TORQUE"
+    assert by_mention["Column Torque"]["dictionary_match"] is True
+    assert by_mention["EPS"]["canonical_name"] == "EPS"
+    assert by_mention["EPS"]["dictionary_match"] is True
+
+
 def test_normalize_requirement_rows_only_adds_normalized_entities():
     requirements = [
         {

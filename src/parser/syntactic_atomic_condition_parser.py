@@ -878,7 +878,16 @@ def _placeholderize_entities(text: str, entities: List[JsonDict]) -> tuple[str, 
         cursor = end
         placeholder_map[placeholder] = {"entity": entity, "span": [start, end], "text": text[start:end]}
     pieces.append(text[cursor:])
-    return "".join(pieces), placeholder_map
+    return _remove_entity_wrapper_braces_from_placeholders("".join(pieces)), placeholder_map
+
+
+def _remove_entity_wrapper_braces_from_placeholders(text: str) -> str:
+    placeholder_pattern = "|".join(sorted(SUPPORTED_ENTITY_TYPES))
+    return re.sub(
+        rf"(?<![\w|])\{{(?P<placeholder>(?:{placeholder_pattern})_\d+)\}}(?!\|)",
+        r"\g<placeholder>",
+        text,
+    )
 
 
 def _right_relation_entities(placeholder_map: JsonDict) -> List[str]:

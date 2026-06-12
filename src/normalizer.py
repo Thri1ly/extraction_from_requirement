@@ -70,6 +70,7 @@ ENTITY_DEFINITIONS: List[Dict[str, object]] = [
 def normalize_mention(mention: str) -> JsonDict:
     """Normalize one natural-language or signal-code mention."""
 
+    mention = clean_entity_wrapper(mention)
     for definition in ENTITY_DEFINITIONS:
         for pattern in definition["patterns"]:
             if re.fullmatch(pattern, mention, flags=re.IGNORECASE):
@@ -117,6 +118,7 @@ def normalize_mention_with_dictionary(
 ) -> JsonDict | None:
     """Normalize one mention using an external entity dictionary."""
 
+    mention = clean_entity_wrapper(mention)
     entity = dictionary_index.get(match_key(mention))
     if not entity:
         return None
@@ -180,7 +182,7 @@ def normalize_entities(
     unknown_candidates: List[JsonDict] = []
     for source_name, source_entities in (("rule", rule_entities or []), ("ner", ner_entities or [])):
         for entity in source_entities:
-            mention = str(entity.get("mention") or entity.get("text") or entity.get("name") or "")
+            mention = clean_entity_wrapper(str(entity.get("mention") or entity.get("text") or entity.get("name") or ""))
             if not mention:
                 continue
             item = normalize_mention_with_dictionary(mention, dictionary_index, source_name) if dictionary_index else None
@@ -267,3 +269,14 @@ def match_key(value: str) -> str:
     """Normalize text for alias lookup."""
 
     return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def clean_entity_wrapper(mention: str) -> str:
+    """Remove a non-semantic outer entity wrapper from extractor mentions."""
+
+    stripped = mention.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        inner = stripped[1:-1].strip()
+        if inner and "{" not in inner and "}" not in inner:
+            return inner
+    return stripped

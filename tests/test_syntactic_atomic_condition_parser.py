@@ -740,6 +740,61 @@ def test_syntactic_parser_parses_fault_in_component_condition():
     }
 
 
+def test_syntactic_parser_ignores_entity_wrapper_braces_in_placeholder_rules():
+    fault = parse_condition_line(
+        "{DEM_COLUMN_TORQUE_IMPLAUSIBLE} in {EPS}",
+        normalized_entities=[
+            {
+                "mention": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+                "type": "FAULT",
+                "canonical_name": "DEM_COLUMN_TORQUE_IMPLAUSIBLE",
+            },
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+        ],
+    )
+    range_condition = parse_condition_line(
+        "0 < {S_SPEED} < 100",
+        normalized_entities=[
+            {"mention": "0", "type": "VALUE", "canonical_name": "0"},
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "100", "type": "VALUE", "canonical_name": "100"},
+        ],
+    )
+    bare_state = parse_condition_line(
+        "{S_COLUMN_TORQUE_QF} invalid",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+    quantified_component = parse_condition_line(
+        "one of the {steering channels} is Active",
+        normalized_entities=[
+            {
+                "mention": "steering channels",
+                "type": "COMPONENT",
+                "canonical_name": "STEERING_CHANNEL",
+                "members": ["LEFT_STEERING_CHANNEL", "RIGHT_STEERING_CHANNEL"],
+            },
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+        ],
+    )
+    analysis = build_syntax_analysis(
+        "{S_COLUMN_TORQUE_QF} invalid",
+        [
+            {"mention": "S_COLUMN_TORQUE_QF", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE_QF"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert analysis["placeholder_text"] == "SIGNAL_1 STATE_1"
+    assert fault["type"] == "fault_component_condition"
+    assert range_condition["type"] == "range_condition"
+    assert bare_state["type"] == "signal_state_condition"
+    assert quantified_component["type"] == "condition_group"
+    assert quantified_component["quantifier"] == "ANY_ONE"
+
+
 def test_syntactic_parser_falls_back_to_legacy_threshold_parser():
     parsed = parse_condition_line(
         "S_SPEED > 10kph",
