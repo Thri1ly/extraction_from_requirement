@@ -189,4 +189,6 @@ def test_run_batch_debug_atomic_conditions_can_use_syntactic_parser(tmp_path):
     parsed_without_review = tmp_path / "debug_report.parsed_without_review.md"
     report = parsed_without_review.read_text(encoding="utf-8")
     assert "**Syntax Analysis**" not in report
-    assert "SIGNAL_1 shall be STATE_1 or STATE_2" not in report
+    assert "**Placeholder Text**" in report
+    assert "SIGNAL_1 shall be STATE_1 or STATE_2" in report
+    assert "placeholder_map" not in report

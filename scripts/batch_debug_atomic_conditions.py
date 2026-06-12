@@ -67,6 +67,7 @@ def build_markdown_report(results: Sequence[JsonDict]) -> str:
         md.append(f"- Overall confidence: `{_overall_confidence(result):.2f}`\n\n")
         md.append("**Condition Line**\n\n")
         md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
+        md.append(_placeholder_text_section(result))
         md.append("**Parsed Result**\n\n")
         md.append(json_block(parsed) + "\n\n")
     return "".join(md)
@@ -99,6 +100,7 @@ def build_category_report(title: str, results: Sequence[JsonDict]) -> str:
         md.append(f"- Overall confidence: `{_overall_confidence(result):.2f}`\n\n")
         md.append("**Condition Line**\n\n")
         md.append(text_block(str(result.get("condition_line", ""))) + "\n\n")
+        md.append(_placeholder_text_section(result))
         md.append("**Parsed Result**\n\n")
         md.append(json_block(parsed) + "\n\n")
     return "".join(md)
@@ -181,6 +183,16 @@ def _overall_confidence(result: JsonDict) -> float:
         except (TypeError, ValueError):
             return 0.0
     return 0.0
+
+
+def _placeholder_text_section(result: JsonDict) -> str:
+    syntax_analysis = result.get("syntax_analysis")
+    if not isinstance(syntax_analysis, dict):
+        return ""
+    placeholder_text = syntax_analysis.get("placeholder_text")
+    if not placeholder_text:
+        return ""
+    return "**Placeholder Text**\n\n" + text_block(str(placeholder_text)) + "\n\n"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

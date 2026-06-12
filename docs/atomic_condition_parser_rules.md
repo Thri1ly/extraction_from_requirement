@@ -236,6 +236,8 @@ Batch report:
 E:\App\Anaconda\python.exe scripts\batch_debug_atomic_conditions.py --input data\condition_lines.jsonl --output reports\atomic_condition_report.md --dictionary-path data\signals.jsonl
 ```
 
+When syntactic syntax analysis is available, the main batch Markdown report and its category subreports show `Placeholder Text` for each row. They do not show `placeholder_map`; inspect JSONL output or the single-line debug script if map-level span/entity details are needed.
+
 Validation:
 
 ```powershell

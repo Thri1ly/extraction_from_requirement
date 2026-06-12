@@ -109,6 +109,8 @@ When a condition fails, inspect these first:
 2. `placeholder_text`
 3. final parsed output
 
+Batch atomic debug Markdown reports include `Placeholder Text` in the main report and category subreports (`parsed_without_review`, `parsed_with_review`, `unparsed`) when syntactic syntax analysis is available. They intentionally do not include `placeholder_map`, so the reports stay readable while still showing the sentence pattern seen by parser rules.
+
 If a rule should match but placeholder text does not contain the expected placeholders, the issue is usually entity extraction or normalization, not the atomic parser.
 
 Example expected placeholder:
