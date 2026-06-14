@@ -31,12 +31,12 @@ def by_type(items, item_type):
 def test_req_101_state_validity_calculate_limit_and_it_coreference():
     req = enhanced("REQ_101")
 
-    state = by_type(req["parsed_conditions"], "state_definition_condition")[0]
-    assert state["state_name"] == "VehicleMoving"
-    assert state["signal"] == "S_VEHICLE_SPEED"
-    assert state["operator"] == ">"
-    assert state["value"] == 3
-    assert state["unit"] == "kph"
+    assert not by_type(req["parsed_conditions"], "state_definition_condition")
+    threshold = by_type(req["parsed_conditions"], "threshold_condition")[0]
+    assert threshold["signal"] == "S_VEHICLE_SPEED"
+    assert threshold["operator"] == ">"
+    assert threshold["value"] == 3
+    assert threshold["unit"] == "kph"
 
     validity = by_type(req["parsed_conditions"], "redundant_signal_validity")[0]
     assert validity["signal_group"] == "VehicleSpeedGroup"

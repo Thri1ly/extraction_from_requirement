@@ -130,24 +130,19 @@ def test_debug_atomic_condition_line_outputs_confidence_for_unclear_named_defini
     )
 
     parsed = result["parsed"]
-    assert parsed["type"] == "state_definition_condition"
-    assert parsed["state_source"] == "inferred_from_text"
-    assert parsed["definition"]["type"] == "condition_group"
-    assert parsed["definition"]["children"][0]["signal"] == "S_COLUMN_TORQUE"
-    assert parsed["definition"]["children"][1]["signal"] == "S_COLUMN_VELOCITY"
-    assert parsed["confidence"] == {
-        "overall": 0.78,
-        "structure": 0.95,
-        "state_name": 0.45,
-        "definition": 0.95,
-    }
+    assert parsed["type"] == "condition_group"
+    assert "state_definition_condition" not in str(parsed)
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["expression_condition"]["type"] == "condition_group"
+    assert parsed["expression_condition"]["children"][0]["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["expression_condition"]["children"][1]["signal"] == "S_COLUMN_VELOCITY"
     assert result["parse_confidence"] == {
-        "overall": 0.4,
-        "parser": 0.78,
+        "overall": 0.2,
+        "parser": 0.2,
         "normalization": 0.4,
     }
     assert parsed["need_review"] is True
-    assert parsed["review_reason"] == "state name inferred from unclear natural-language description"
+    assert parsed["nlp_condition"]["review_reason"] == "natural-language condition parsed by nlp fallback"
 
 
 def test_debug_atomic_condition_line_keeps_dictionary_misses_and_lowers_confidence(tmp_path):

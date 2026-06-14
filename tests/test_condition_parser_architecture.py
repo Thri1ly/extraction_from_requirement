@@ -645,7 +645,9 @@ def test_parse_bracketed_definition_does_not_expand_unclear_outer_signals_to_zer
     )
 
     assert len(conditions) == 1
-    definition_children = conditions[0]["definition"]["children"]
+    assert conditions[0]["type"] == "condition_group"
+    assert "state_definition_condition" not in str(conditions[0])
+    definition_children = conditions[0]["expression_condition"]["children"]
     assert [child["signal"] for child in definition_children] == ["S_COLUMN_TORQUE", "S_COLUMN_VELOCITY"]
 
 
@@ -684,10 +686,10 @@ def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_stat
         ],
     )
 
-    assert parsed["type"] == "state_definition_condition"
-    assert parsed["state_name"] == "StaticCondition"
-    assert parsed["state_source"] == "dictionary"
-    assert parsed["definition"] == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "static condition"
+    assert parsed["expression_condition"] == {
         "type": "threshold_condition",
         "mention": "Column Velocity == 0rev/s",
         "signal": "S_COLUMN_VELOCITY",
@@ -696,14 +698,9 @@ def test_parse_static_condition_uses_bracketed_numeric_definition_not_outer_stat
         "value": 0,
         "unit": "rev/s",
         "need_review": False,
+        "parser": "legacy",
     }
-    assert parsed["confidence"] == {
-        "overall": 0.93,
-        "structure": 0.95,
-        "state_name": 0.9,
-        "definition": 0.95,
-    }
-    assert parsed["need_review"] is False
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_parse_static_condition_with_zero_value_uses_bracketed_value_entity():
@@ -741,9 +738,9 @@ def test_parse_static_condition_with_zero_value_uses_bracketed_value_entity():
         ],
     )
 
-    assert parsed["type"] == "state_definition_condition"
-    assert parsed["state_name"] == "StaticCondition"
-    assert parsed["definition"] == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["mention"] == "static condition"
+    assert parsed["expression_condition"] == {
         "type": "threshold_condition",
         "mention": "Column Velocity == 0",
         "signal": "S_COLUMN_VELOCITY",
@@ -752,6 +749,7 @@ def test_parse_static_condition_with_zero_value_uses_bracketed_value_entity():
         "value": 0,
         "unit": None,
         "need_review": False,
+        "parser": "legacy",
     }
 
 
@@ -797,15 +795,16 @@ def test_parse_bracketed_signal_parameter_threshold_definition():
         ],
     )
 
-    assert parsed["type"] == "state_definition_condition"
-    assert parsed["state_name"] == "Moving"
-    assert parsed["definition"] == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["mention"] == "vehicle is moving at pre-defined minimum vehicle speed"
+    assert parsed["expression_condition"] == {
         "type": "parameter_threshold_condition",
         "mention": "S_VEHICLE_SPEED >= P_FD_MIN_VEH_SPD",
         "signal": "S_VEHICLE_SPEED",
         "operator": ">=",
         "parameter": "P_FD_MIN_VEH_SPD",
         "need_review": False,
+        "parser": "legacy",
     }
 
 
@@ -1002,9 +1001,9 @@ def test_parse_bracketed_state_definition_with_abs_signal_comparison_duration():
         ],
     )
 
-    assert parsed["type"] == "state_definition_condition"
-    assert parsed["state_name"] == "StraightAheadDrivingCondition"
-    assert parsed["definition"] == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["mention"] == "A straight ahead driving condition is detected"
+    assert parsed["expression_condition"] == {
         "type": "signal_comparison_condition",
         "mention": "ABS(S_YAW_RATE) <= S_YAW_RATE_LEVEL for a period of P_DURATION_TIME",
         "left_signal": "S_YAW_RATE",
@@ -1019,6 +1018,7 @@ def test_parse_bracketed_state_definition_with_abs_signal_comparison_duration():
             }
         ],
         "need_review": False,
+        "parser": "legacy",
     }
 
 
@@ -1071,30 +1071,21 @@ def test_parse_bracketed_signal_state_and_parameter_definition_as_and_group():
         ],
     )
 
-    assert parsed == {
-        "type": "condition_group",
-        "logic": "AND",
-        "mention": "ESP capability is available (S_ASSIST_CAPABILITY is equal to or greater than P_ASSIST_LIMIT)",
-        "children": [
-            {
-                "type": "signal_state_condition",
-                "mention": "ESP capability == AVAILABLE",
-                "signal": "S_ASSIST_CAPABILITY",
-                "operator": "==",
-                "required_state": "AVAILABLE",
-                "need_review": False,
-            },
-            {
-                "type": "parameter_threshold_condition",
-                "mention": "S_ASSIST_CAPABILITY >= P_ASSIST_LIMIT",
-                "signal": "S_ASSIST_CAPABILITY",
-                "operator": ">=",
-                "parameter": "P_ASSIST_LIMIT",
-                "need_review": False,
-            },
-        ],
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["mention"] == "ESP capability is available (S_ASSIST_CAPABILITY is equal to or greater than P_ASSIST_LIMIT)"
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "ESP capability is available"
+    assert parsed["expression_condition"] == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_ASSIST_CAPABILITY >= P_ASSIST_LIMIT",
+        "signal": "S_ASSIST_CAPABILITY",
+        "operator": ">=",
+        "parameter": "P_ASSIST_LIMIT",
         "need_review": False,
+        "parser": "legacy",
     }
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_parse_bracketed_signal_state_and_suffix_all_parameter_definition_as_and_group():
@@ -1148,15 +1139,9 @@ def test_parse_bracketed_signal_state_and_suffix_all_parameter_definition_as_and
 
     assert parsed["type"] == "condition_group"
     assert parsed["logic"] == "AND"
-    assert parsed["children"][0] == {
-        "type": "signal_state_condition",
-        "mention": "ESP capability == AVAILABLE",
-        "signal": "S_ASSIST_CAPABILITY",
-        "operator": "==",
-        "required_state": "AVAILABLE",
-        "need_review": False,
-    }
-    suffix_group = parsed["children"][1]
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "ESP capability is available"
+    suffix_group = parsed["expression_condition"]
     assert suffix_group == {
         "type": "condition_group",
         "logic": "AND",
@@ -1182,7 +1167,9 @@ def test_parse_bracketed_signal_state_and_suffix_all_parameter_definition_as_and
             },
         ],
         "need_review": False,
+        "parser": "legacy",
     }
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_parse_suffix_any_parameter_threshold_condition():

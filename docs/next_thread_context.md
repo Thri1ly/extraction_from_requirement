@@ -105,10 +105,16 @@ Dictionary misses should not be dropped by default. They should pass into parsin
 
 `COMPONENT is/are/in STATE` now tolerates relation-state modifiers such as `EPS Initialization is completely finished`. The normalized `required_state` stays as the state entity, and modifier text is preserved in `state_modifier` / `state_phrase`.
 
-Independent outer and parenthesized signal predicates are kept separate. For example, `SIGNAL1 is STATE1(SIGNAL2 == FULL)` should parse as `SIGNAL1 == STATE1` and `SIGNAL2 == FULL`, not cross-pair `SIGNAL2` with `STATE1`.
+Parenthesized semantic/expression forms are kept as independent parts in one group.
+For `xxx1 (xxx2)`, when `xxx2` is a formal expression, the output is a `condition_group`
+with top-level `nlp_condition` for `xxx1`, top-level `expression_condition` for `xxx2`,
+and `children=[nlp_condition, expression_condition]`. The two parts must not infer fields
+from each other. For example, `SIGNAL1 is STATE1(SIGNAL2 == FULL)` keeps the outer phrase
+as natural language and the parenthesized expression as `SIGNAL2 == FULL`, not a cross-pair
+of `SIGNAL2` with `STATE1`.
 
 Passive detection events with parenthesized signal comparisons are kept as one `condition_group`
-with two children rather than collapsing into a state definition or only returning the
+with top-level `nlp_condition` and `expression_condition` rather than only returning the
 parenthesized expression. For example,
 `a xxx is detected in ECU1 (SIGNAL1 < SIGNAL2 for a xxx period of at least P_TIME)`
 emits an outer `nlp_condition` (`subject=xxx`, `predicate=detect`, `voice=passive`,
@@ -116,9 +122,32 @@ emits an outer `nlp_condition` (`subject=xxx`, `predicate=detect`, `voice=passiv
 `signal_comparison_condition`.
 The duration phrase is attached to the comparison as a `duration` qualifier.
 
+The parser public entry points should not emit `state_definition_condition`. Legacy
+parenthesized helpers now return the same `condition_group` shape with `nlp_condition` and
+`expression_condition` instead of exposing the old type.
+
 Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` now emit only the signal-state condition; enum values are parsing evidence and are not emitted as threshold children.
 
 When a clear relation/operator is followed by a state-like phrase that was not normalized as `STATE`, selected syntactic rules may infer a low-confidence `STATE` with `need_review=true`, for example `FULL` after `==` or `fail operation` in a right-side state list.
+
+Complete `AND`/`OR` clauses are parsed clause-by-clause when each side is a full condition,
+for example `S_STATUS is Active and EPS is Degraded` becomes an `AND` group with a
+`signal_state_condition` child and a `component_state_condition` child. This avoids
+cross-pairing the second right-side state with the first signal.
+
+Quantified signal and component member rules support `at least one SIGNAL is STATE` in
+addition to `at least one of SIGNAL is STATE`; `at least one` maps to
+`quantifier=ANY_ONE`, `logic=OR`.
+
+Adjacent `PARAMETER` placeholders such as `speed threshold` are combined into one final
+parameter output with a `P_` prefix, for example `P_SPEED_THRESHOLD`. Plain parameter
+canonical names are normalized to `P_...` in parser outputs.
+
+`range between/of (the) PARAMETER and (the) PARAMETER` is parsed as an `in_range`
+`range_condition` with `lower_operator=>=` and `upper_operator=<=`. If it appears after a
+signal action, for example `S_SPEED increases to the range between P_SPEED_MIN and
+P_SPEED_MAX`, the `signal_action_condition` preserves the full action phrase and stores the
+range under `target` with `target_relation=to`.
 
 Single-signal predicates with duration qualifiers are syntactic now. The qualifier can attach to state, value, or parameter conditions:
 

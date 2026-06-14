@@ -74,6 +74,41 @@ def parse_condition_line(text: str, normalized_entities: List[JsonDict] | None =
     return _fallback_condition(text, normalized_entities or [])
 
 
+def _legacy_parenthesized_condition_group(
+    text: str,
+    outer_text: str,
+    expression_condition: JsonDict,
+    normalized_entities: List[JsonDict],
+) -> JsonDict:
+    nlp_condition: JsonDict = {
+        "type": "nlp_condition",
+        "mention": outer_text,
+        "text": outer_text,
+        "predicate": _fallback_predicate(outer_text),
+        "semantic_chunks": [{"role": "raw_text", "text": outer_text}],
+        "known_entities": [
+            {key: entity[key] for key in ("mention", "type", "canonical_name") if key in entity}
+            for entity in normalized_entities
+            if _entity_appears_in_text(outer_text, entity)
+        ],
+        "parser": "legacy",
+        "need_review": True,
+        "review_reason": "natural-language condition parsed by nlp fallback",
+    }
+    expression_condition = dict(expression_condition)
+    expression_condition.setdefault("parser", "legacy")
+    return {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": text,
+        "nlp_condition": nlp_condition,
+        "expression_condition": expression_condition,
+        "children": [nlp_condition, expression_condition],
+        "parser": "legacy",
+        "need_review": bool(nlp_condition.get("need_review") or expression_condition.get("need_review")),
+    }
+
+
 def _fallback_condition(text: str, normalized_entities: List[JsonDict]) -> JsonDict:
     condition = {
         "type": "syntactic_fallback_condition",
@@ -178,40 +213,35 @@ def _parse_threshold_fragment(fragment: str) -> JsonDict | None:
 
 
 def parse_state_definition_conditions(text: str) -> List[JsonDict]:
-    """Parse named state definitions with their enclosed signal predicate."""
+    """Parse legacy parenthesized vehicle-moving expressions as two independent parts."""
 
     conditions: List[JsonDict] = []
     for match in re.finditer(r"\bvehicle\s+is\s+moving\s*\((?P<expr>[^)]*)\)", text, flags=re.IGNORECASE):
+        outer_text = match.group(0).split("(", 1)[0].strip()
         threshold = _parse_threshold_fragment(match.group("expr"))
         if not threshold:
             conditions.append(
-                {
-                    "type": "state_definition_condition",
-                    "mention": match.group(0),
-                    "state_name": "VehicleMoving",
-                    "need_review": True,
-                    "review_reason": "state definition predicate was not parsed",
-                }
+                _legacy_parenthesized_condition_group(
+                    match.group(0),
+                    outer_text,
+                    _fallback_condition(match.group("expr"), []),
+                    [],
+                )
             )
             continue
         conditions.append(
-            {
-                "type": "state_definition_condition",
-                "mention": match.group(0),
-                "state_name": "VehicleMoving",
-                "signal": threshold["signal"],
-                "operator": threshold["operator"],
-                "value": threshold["value"],
-                "unit": threshold["unit"],
-                "definition": threshold,
-                "need_review": False,
-            }
+            _legacy_parenthesized_condition_group(
+                match.group(0),
+                outer_text,
+                threshold,
+                [],
+            )
         )
     return conditions
 
 
 def parse_bracketed_definition_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
-    """Parse named natural-language definitions whose bracketed predicate is clear."""
+    """Parse parenthesized expression predicates beside natural-language outer text."""
 
     bracketed_definition = _outer_bracketed_definition(text)
     if not bracketed_definition:
@@ -242,37 +272,7 @@ def parse_bracketed_definition_conditions(text: str, normalized_entities: List[J
     if not definition:
         return []
 
-    signal_state_group = _bracketed_signal_state_definition_group(
-        text,
-        main_clause,
-        definition,
-        normalized_entities,
-    )
-    if signal_state_group:
-        return [signal_state_group]
-
-    state_name, state_source, state_confidence = _state_name_from_main_clause(main_clause, normalized_entities)
-    definition_confidence = _definition_confidence(definition)
-    confidence = {
-        "overall": round((0.95 + state_confidence + definition_confidence) / 3, 2),
-        "structure": 0.95,
-        "state_name": state_confidence,
-        "definition": definition_confidence,
-    }
-    need_review = state_confidence < 0.8 or bool(definition.get("need_review"))
-    result = {
-        "type": "state_definition_condition",
-        "mention": text,
-        "state_name": state_name,
-        "state_source": state_source,
-        "definition_relation": "DEFINED_BY",
-        "definition": definition,
-        "confidence": confidence,
-        "need_review": need_review,
-    }
-    if need_review and state_confidence < 0.8:
-        result["review_reason"] = "state name inferred from unclear natural-language description"
-    return [result]
+    return [_legacy_parenthesized_condition_group(text, main_clause, definition, normalized_entities)]
 
 
 def parse_redundant_signal_validity(text: str) -> List[JsonDict]:

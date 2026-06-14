@@ -225,6 +225,28 @@ def test_syntactic_parser_expands_one_of_signal_members_state_condition():
     assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
 
 
+def test_syntactic_parser_expands_at_least_one_signal_members_state_condition_without_of():
+    parsed = parse_condition_line(
+        "at least one steering channel is Active",
+        normalized_entities=[
+            {
+                "mention": "steering channel",
+                "type": "SIGNAL",
+                "canonical_name": "S_STEERING_CHANNEL",
+                "members": ["S_STEERING_CHANNEL_1", "S_STEERING_CHANNEL_2"],
+            },
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert parsed["quantifier"] == "ANY_ONE"
+    assert parsed["source_signal"] == "S_STEERING_CHANNEL"
+    assert [child["signal"] for child in parsed["children"]] == ["S_STEERING_CHANNEL_1", "S_STEERING_CHANNEL_2"]
+    assert [child["required_state"] for child in parsed["children"]] == ["Active", "Active"]
+
+
 def test_syntactic_parser_keeps_parenthesized_independent_signal_conditions_separate():
     parsed = parse_condition_line(
         "SIGNAL1 is STATE1(SIGNAL2 == FULL)",
@@ -238,19 +260,14 @@ def test_syntactic_parser_keeps_parenthesized_independent_signal_conditions_sepa
     assert parsed["type"] == "condition_group"
     assert parsed["logic"] == "AND"
     assert parsed["need_review"] is True
-    assert parsed["children"][0] == {
-        "type": "signal_state_condition",
-        "mention": "SIGNAL1 == STATE1",
-        "signal": "SIGNAL1",
-        "operator": "==",
-        "required_state": "STATE1",
-        "need_review": False,
-    }
-    assert parsed["children"][1]["type"] == "signal_state_condition"
-    assert parsed["children"][1]["signal"] == "SIGNAL2"
-    assert parsed["children"][1]["required_state"] == "FULL"
-    assert parsed["children"][1]["need_review"] is True
-    assert parsed["children"][1]["review_reason"] == "state inferred from syntax"
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "SIGNAL1 is STATE1"
+    assert parsed["expression_condition"]["type"] == "signal_state_condition"
+    assert parsed["expression_condition"]["signal"] == "SIGNAL2"
+    assert parsed["expression_condition"]["required_state"] == "FULL"
+    assert parsed["expression_condition"]["need_review"] is True
+    assert parsed["expression_condition"]["review_reason"] == "state inferred from syntax"
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_comparison_duration():
@@ -268,7 +285,9 @@ def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_compari
     assert parsed["type"] == "condition_group"
     assert parsed["logic"] == "AND"
     assert parsed["need_review"] is False
-    outer = parsed["children"][0]
+    assert "nlp_condition" in parsed
+    assert "expression_condition" in parsed
+    outer = parsed["nlp_condition"]
     assert outer["type"] == "nlp_condition"
     assert outer["mention"] == "a xxx is detected in ECU1"
     assert outer["predicate"] == "detect"
@@ -281,7 +300,7 @@ def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_compari
         {"role": "predicate", "text": "is detected", "lemma": "detect", "voice": "passive"},
         {"role": "location", "relation": "in", "text": "ECU1", "entity_type": "COMPONENT", "canonical_name": "ECU1"},
     ]
-    inner = parsed["children"][1]
+    inner = parsed["expression_condition"]
     assert inner == {
         "type": "signal_comparison_condition",
         "mention": "SIGNAL1 < SIGNAL2",
@@ -298,6 +317,43 @@ def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_compari
         ],
         "need_review": False,
     }
+    assert parsed["children"] == [outer, inner]
+
+
+def test_syntactic_parser_replaces_state_definition_with_independent_parenthesized_parts():
+    parsed = parse_condition_line(
+        "Static condition (S_SPEED > P_SPEED_LIMIT)",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert "state_definition_condition" not in str(parsed)
+    assert parsed["nlp_condition"] == {
+        "type": "nlp_condition",
+        "mention": "Static condition",
+        "text": "Static condition",
+        "predicate": "unknown_relation",
+        "semantic_chunks": [{"role": "raw_text", "text": "Static condition"}],
+        "known_entities": [],
+        "syntax_source": "placeholder",
+        "parser": "syntactic",
+        "need_review": True,
+        "review_reason": "natural-language condition parsed by nlp fallback",
+    }
+    assert parsed["expression_condition"] == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_SPEED > P_SPEED_LIMIT",
+        "signal": "S_SPEED",
+        "operator": ">",
+        "parameter": "P_SPEED_LIMIT",
+        "need_review": False,
+        "parser": "syntactic",
+    }
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_preserves_incomplete_nlp_fragment_as_itself():
@@ -333,6 +389,117 @@ def test_syntactic_parser_keeps_signal_alias_parentheses_out_of_nlp_segment_comp
     assert parsed["type"] == "signal_state_condition"
     assert parsed["signal"] == "S_COLUMN_TORQUE"
     assert parsed["required_state"] == "invalid"
+
+
+def test_syntactic_parser_groups_complete_and_or_clauses_without_cross_pairing():
+    parsed_and = parse_condition_line(
+        "S_STATUS is Active and EPS is Degraded",
+        normalized_entities=[
+            {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+            {"mention": "Degraded", "type": "STATE", "canonical_name": "Degraded"},
+        ],
+    )
+    parsed_or = parse_condition_line(
+        "S_STATUS is Active or EPS is Degraded",
+        normalized_entities=[
+            {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+            {"mention": "Degraded", "type": "STATE", "canonical_name": "Degraded"},
+        ],
+    )
+
+    assert parsed_and["type"] == "condition_group"
+    assert parsed_and["logic"] == "AND"
+    assert parsed_and["children"][0]["type"] == "signal_state_condition"
+    assert parsed_and["children"][0]["signal"] == "S_STATUS"
+    assert parsed_and["children"][0]["required_state"] == "Active"
+    assert parsed_and["children"][1]["type"] == "component_state_condition"
+    assert parsed_and["children"][1]["component"] == "EPS"
+    assert parsed_and["children"][1]["required_state"] == "Degraded"
+    assert parsed_or["type"] == "condition_group"
+    assert parsed_or["logic"] == "OR"
+    assert [child["type"] for child in parsed_or["children"]] == ["signal_state_condition", "component_state_condition"]
+
+
+def test_syntactic_parser_combines_adjacent_parameter_tokens_as_p_parameter():
+    parsed = parse_condition_line(
+        "S_SPEED > speed threshold",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "speed", "type": "PARAMETER", "canonical_name": "speed"},
+            {"mention": "threshold", "type": "PARAMETER", "canonical_name": "threshold"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "S_SPEED > P_SPEED_THRESHOLD",
+        "signal": "S_SPEED",
+        "operator": ">",
+        "parameter": "P_SPEED_THRESHOLD",
+        "need_review": False,
+        "parser": "syntactic",
+    }
+
+
+def test_syntactic_parser_parses_range_between_parameters_as_range_condition():
+    parsed = parse_condition_line(
+        "S_SPEED is in range between the low speed limit and the high speed limit",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "low speed limit", "type": "PARAMETER", "canonical_name": "low speed limit"},
+            {"mention": "high speed limit", "type": "PARAMETER", "canonical_name": "high speed limit"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "range_condition",
+        "mention": "S_SPEED is in range between the low speed limit and the high speed limit",
+        "signal": "S_SPEED",
+        "relation": "in_range",
+        "lower_operator": ">=",
+        "lower_parameter": "P_LOW_SPEED_LIMIT",
+        "upper_operator": "<=",
+        "upper_parameter": "P_HIGH_SPEED_LIMIT",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_preserves_action_tail_and_parses_target_range():
+    parsed = parse_condition_line(
+        "S_SPEED increases to the range between P_SPEED_MIN and P_SPEED_MAX",
+        normalized_entities=[
+            {"mention": "S_SPEED", "type": "SIGNAL", "canonical_name": "S_SPEED"},
+            {"mention": "increases", "type": "ACTION", "canonical_name": "increase"},
+            {"mention": "P_SPEED_MIN", "type": "PARAMETER", "canonical_name": "P_SPEED_MIN"},
+            {"mention": "P_SPEED_MAX", "type": "PARAMETER", "canonical_name": "P_SPEED_MAX"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_action_condition",
+        "mention": "S_SPEED increases to the range between P_SPEED_MIN and P_SPEED_MAX",
+        "signal": "S_SPEED",
+        "action": "increase",
+        "target_relation": "to",
+        "target": {
+            "type": "range_condition",
+            "mention": "the range between P_SPEED_MIN and P_SPEED_MAX",
+            "relation": "in_range",
+            "lower_operator": ">=",
+            "lower_parameter": "P_SPEED_MIN",
+            "upper_operator": "<=",
+            "upper_parameter": "P_SPEED_MAX",
+            "parser": "syntactic",
+            "need_review": False,
+        },
+        "parser": "syntactic",
+        "need_review": False,
+    }
 
 
 def test_syntactic_parser_expands_both_signal_members_state_condition():
@@ -621,7 +788,7 @@ def test_syntactic_parser_placeholderizes_repeated_same_value_mentions():
     assert analysis["placeholder_text"] == "SIGNAL_1 is VALUE_1 (SIGNAL_2 is equal to VALUE_2)"
 
 
-def test_syntactic_parser_prefers_explicit_parenthesized_signal_value_definition():
+def test_syntactic_parser_composes_parenthesized_signal_value_expression_with_outer_semantics():
     parsed = parse_condition_line(
         "assist capability is zero (S_ASSIST_CAPABILITY is equal to zero)",
         normalized_entities=[
@@ -631,7 +798,10 @@ def test_syntactic_parser_prefers_explicit_parenthesized_signal_value_definition
         ],
     )
 
-    assert parsed == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "assist capability is zero"
+    assert parsed["expression_condition"] == {
         "type": "threshold_condition",
         "mention": "S_ASSIST_CAPABILITY == 0",
         "signal": "S_ASSIST_CAPABILITY",
@@ -640,13 +810,9 @@ def test_syntactic_parser_prefers_explicit_parenthesized_signal_value_definition
         "value": 0,
         "unit": None,
         "parser": "syntactic",
-        "confidence": {
-            "overall": 0.95,
-            "structure": 0.95,
-            "normalization": 0.95,
-        },
         "need_review": False,
     }
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_placeholderizes_repeated_same_state_mentions():
@@ -662,7 +828,7 @@ def test_syntactic_parser_placeholderizes_repeated_same_state_mentions():
     assert analysis["placeholder_text"] == "SIGNAL_1 is STATE_1 (SIGNAL_2 is STATE_2)"
 
 
-def test_syntactic_parser_prefers_explicit_parenthesized_signal_state_definition():
+def test_syntactic_parser_composes_parenthesized_signal_state_expression_with_outer_semantics():
     parsed = parse_condition_line(
         "column torque quality is invalid (S_COLUMN_TORQUE_QF is invalid)",
         normalized_entities=[
@@ -672,20 +838,19 @@ def test_syntactic_parser_prefers_explicit_parenthesized_signal_state_definition
         ],
     )
 
-    assert parsed == {
+    assert parsed["type"] == "condition_group"
+    assert parsed["nlp_condition"]["type"] == "nlp_condition"
+    assert parsed["nlp_condition"]["mention"] == "column torque quality is invalid"
+    assert parsed["expression_condition"] == {
         "type": "signal_state_condition",
         "mention": "S_COLUMN_TORQUE_QF == invalid",
         "signal": "S_COLUMN_TORQUE_QF",
         "operator": "==",
         "required_state": "invalid",
         "parser": "syntactic",
-        "confidence": {
-            "overall": 0.95,
-            "structure": 0.95,
-            "normalization": 0.95,
-        },
         "need_review": False,
     }
+    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_parses_predicateless_signal_state_condition():

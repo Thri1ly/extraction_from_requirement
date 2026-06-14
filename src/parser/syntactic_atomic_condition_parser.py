@@ -64,27 +64,104 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     right_entities = _right_relation_entities(placeholder_map)
 
     conditions: List[JsonDict] = []
+    conditions.extend(_parse_complete_clause_group(text, placeholder_text, signals, components, features, right_entities, placeholder_map))
     conditions.extend(_parse_fault_in_component_condition(text, placeholder_text, faults, components, placeholder_map))
     conditions.extend(_parse_quantified_component_member_state(text, placeholder_text, components, right_entities, placeholder_map))
     conditions.extend(_parse_component_state_condition(text, placeholder_text, components, right_entities, placeholder_map))
     conditions.extend(_parse_feature_state_condition(text, placeholder_text, features, right_entities, placeholder_map))
     conditions.extend(_parse_feature_action_condition(text, placeholder_text, features, actions, placeholder_map))
     conditions.extend(_parse_signal_action_condition(text, placeholder_text, signals, actions, components, placeholder_map))
-    conditions.extend(_parse_parenthesized_event_with_signal_comparison(text, placeholder_text, signals, components, placeholder_map))
+    conditions.extend(_parse_parenthesized_semantic_expression_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_independent_signal_conditions(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_trend_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_bracketed_range_condition(text, placeholder_text, signals, placeholder_map))
+    conditions.extend(_parse_range_between_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_signal_value_state_clause_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_quantified_signal_member_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_without_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_state_without_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_right_duration_qualifier(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_signal_adjacent_parameter_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_single_signal_multi_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_multi_signal_single_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_single_right(text, placeholder_text, signals, right_entities, placeholder_map))
     return conditions
+
+
+def _parse_complete_clause_group(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    components: List[str],
+    features: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    markers = list(re.finditer(r"\b(?P<logic>and/or|and|or)\b", placeholder_text, flags=re.IGNORECASE))
+    if not markers:
+        return []
+
+    logic_values = [_logic_from_marker(match.group("logic")) for match in markers]
+    if len(set(logic_values)) != 1:
+        return []
+
+    boundaries = [0] + [match.start() for match in markers] + [len(placeholder_text)]
+    starts = [0] + [match.end() for match in markers]
+    segments = [
+        placeholder_text[start:end].strip()
+        for start, end in zip(starts, boundaries[1:])
+        if placeholder_text[start:end].strip()
+    ]
+    if len(segments) != len(markers) + 1:
+        return []
+
+    children = [
+        _condition_from_complete_clause_segment(original_text, segment, signals, components, features, right_entities, placeholder_map)
+        for segment in segments
+    ]
+    if any(child is None for child in children):
+        return []
+
+    return [
+        {
+            "type": "condition_group",
+            "logic": logic_values[0],
+            "mention": original_text,
+            "children": children,
+            "parser": "syntactic",
+            "need_review": any(bool(child.get("need_review")) for child in children if child),
+        }
+    ]
+
+
+def _condition_from_complete_clause_segment(
+    original_text: str,
+    segment_text: str,
+    signals: List[str],
+    components: List[str],
+    features: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    signal_condition = _signal_condition_from_segment(original_text, segment_text, signals, right_entities, placeholder_map)
+    if signal_condition:
+        return signal_condition
+
+    component_condition = _component_condition_from_segment(original_text, segment_text, components, right_entities, placeholder_map)
+    if component_condition:
+        return component_condition
+
+    feature_condition = _feature_condition_from_segment(original_text, segment_text, features, right_entities, placeholder_map)
+    if feature_condition:
+        return feature_condition
+
+    return None
+
+
+def _logic_from_marker(marker: str) -> str:
+    return "OR" if marker.lower() in {"or", "and/or"} else "AND"
 
 
 def _parse_fault_in_component_condition(
@@ -136,7 +213,7 @@ def _parse_quantified_component_member_state(
 
     component_placeholder = components[0]
     match = re.search(
-        rf"\b(?P<quantifier>(?:(?:at\s*least|atleast)\s+)?one\s+of|both(?:\s+of)?|all(?:\s+of)?)\s+"
+        rf"\b(?P<quantifier>(?:(?:at\s*least|atleast)\s+)?one(?:\s+of)?|both(?:\s+of)?|all(?:\s+of)?)\s+"
         rf"(?:the\s+)?{re.escape(component_placeholder)}\s+"
         rf"{RELATION_PATTERN.pattern}(?:\s+in)?\s+{re.escape(state_placeholder)}\b",
         placeholder_text,
@@ -299,14 +376,25 @@ def _parse_signal_action_condition(
 
     signal = placeholder_map[signal_placeholder]["entity"]
     action = placeholder_map[action_placeholder]["entity"]
+    target_range = _range_between_condition_from_segment(
+        original_text,
+        placeholder_text[placeholder_text.find(action_placeholder) + len(action_placeholder) :],
+        placeholder_map,
+        signal_placeholder=None,
+    )
     condition: JsonDict = {
         "type": "signal_action_condition",
-        "mention": f"{_display_entity_mention(original_text, signal)} -> {action.get('canonical_name') or action.get('mention')}",
+        "mention": original_text if target_range else f"{_display_entity_mention(original_text, signal)} -> {action.get('canonical_name') or action.get('mention')}",
         "signal": str(signal.get("canonical_name") or signal.get("mention")),
         "action": str(action.get("canonical_name") or action.get("mention")),
         "parser": "syntactic",
         "need_review": False,
     }
+    if target_range:
+        relation = _action_target_relation(placeholder_text, action_placeholder, target_range)
+        if relation:
+            condition["target_relation"] = relation
+        condition["target"] = target_range
     if len(components) == 1:
         component = placeholder_map[components[0]]["entity"]
         condition["component"] = str(component.get("canonical_name") or component.get("mention"))
@@ -362,43 +450,91 @@ def _parse_parenthesized_signal_state_with_predicate(
     return [condition]
 
 
-def _parse_parenthesized_event_with_signal_comparison(
+def _parse_parenthesized_semantic_expression_condition(
     original_text: str,
     placeholder_text: str,
     signals: List[str],
-    components: List[str],
+    right_entities: List[str],
     placeholder_map: JsonDict,
 ) -> List[JsonDict]:
-    if len(signals) < 2 or len(components) != 1:
+    if not signals:
         return []
 
     for match in re.finditer(r"\((?P<body>[^()]*)\)", placeholder_text):
         outer_text = placeholder_text[: match.start()].strip()
         body = match.group("body").strip()
+        outer_original_text = original_text.split("(", 1)[0].strip()
         outer_nlp_condition = _nlp_condition_from_segment(
-            original_text.split("(", 1)[0].strip(),
+            outer_original_text,
             outer_text,
             placeholder_map,
         )
         if not outer_nlp_condition:
             continue
-        body_condition = _signal_comparison_condition_from_segment(original_text, body, signals, placeholder_map)
-        if not body_condition:
+        expression_condition = _expression_condition_from_parenthesized_segment(
+            original_text,
+            body,
+            signals,
+            right_entities,
+            placeholder_map,
+        )
+        if not expression_condition:
             continue
 
-        need_review = bool(outer_nlp_condition.get("need_review") or body_condition.get("need_review"))
-        return [
-            {
-                "type": "condition_group",
-                "logic": "AND",
-                "mention": original_text,
-                "children": [outer_nlp_condition, body_condition],
-                "parser": "syntactic",
-                "need_review": need_review,
-            }
-        ]
+        return [_parenthesized_semantic_expression_group(original_text, outer_nlp_condition, expression_condition)]
 
     return []
+
+
+def _expression_condition_from_parenthesized_segment(
+    original_text: str,
+    segment_text: str,
+    signals: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    signal_comparison = _signal_comparison_condition_from_segment(original_text, segment_text, signals, placeholder_map)
+    if signal_comparison:
+        return signal_comparison
+
+    signal_condition = _signal_condition_from_segment(original_text, segment_text, signals, right_entities, placeholder_map)
+    if signal_condition:
+        signal_condition["parser"] = "syntactic"
+        return signal_condition
+
+    range_condition = _range_between_condition_from_segment(
+        original_text,
+        segment_text,
+        placeholder_map,
+        signal_placeholder=_single_placeholder_in_segment(segment_text, signals),
+    )
+    if range_condition:
+        return range_condition
+
+    return None
+
+
+def _single_placeholder_in_segment(segment_text: str, placeholders: List[str]) -> str | None:
+    segment_placeholders = [placeholder for placeholder in placeholders if placeholder in segment_text]
+    return segment_placeholders[0] if len(segment_placeholders) == 1 else None
+
+
+def _parenthesized_semantic_expression_group(
+    original_text: str,
+    nlp_condition: JsonDict,
+    expression_condition: JsonDict,
+) -> JsonDict:
+    need_review = bool(nlp_condition.get("need_review") or expression_condition.get("need_review"))
+    return {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": original_text,
+        "nlp_condition": nlp_condition,
+        "expression_condition": expression_condition,
+        "children": [nlp_condition, expression_condition],
+        "parser": "syntactic",
+        "need_review": need_review,
+    }
 
 
 def _nlp_condition_from_segment(
@@ -738,6 +874,85 @@ def _parse_bracketed_range_condition(
     return [condition]
 
 
+def _parse_range_between_condition(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 1:
+        return []
+
+    condition = _range_between_condition_from_segment(
+        original_text,
+        placeholder_text,
+        placeholder_map,
+        signal_placeholder=signals[0],
+    )
+    return [condition] if condition else []
+
+
+def _range_between_condition_from_segment(
+    original_text: str,
+    segment_text: str,
+    placeholder_map: JsonDict,
+    signal_placeholder: str | None = None,
+) -> JsonDict | None:
+    parameters = _ordered_placeholders(segment_text, _placeholders_by_type(placeholder_map, "PARAMETER"))
+    if len(parameters) != 2:
+        return None
+
+    lower_parameter, upper_parameter = parameters
+    if signal_placeholder and signal_placeholder not in segment_text:
+        return None
+    match = re.search(
+        rf"\brange\s+(?:between|of)\s+(?:the\s+)?{re.escape(lower_parameter)}\s+"
+        rf"and\s+(?:the\s+)?{re.escape(upper_parameter)}\b",
+        segment_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    condition: JsonDict = {
+        "type": "range_condition",
+        "mention": original_text if signal_placeholder else _range_between_mention(original_text, placeholder_map[lower_parameter]["entity"], placeholder_map[upper_parameter]["entity"]),
+        "relation": "in_range",
+        "lower_operator": ">=",
+        "upper_operator": "<=",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+    if signal_placeholder:
+        signal = placeholder_map[signal_placeholder]["entity"]
+        condition["signal"] = str(signal.get("canonical_name") or signal.get("mention"))
+    _assign_range_bound(condition, "lower", placeholder_map[lower_parameter]["entity"])
+    _assign_range_bound(condition, "upper", placeholder_map[upper_parameter]["entity"])
+    return condition
+
+
+def _range_between_mention(text: str, lower: JsonDict, upper: JsonDict) -> str:
+    lower_text = re.escape(_display_entity_mention(text, lower))
+    upper_text = re.escape(_display_entity_mention(text, upper))
+    match = re.search(
+        rf"(?:the\s+)?range\s+(?:between|of)\s+(?:the\s+)?{lower_text}\s+and\s+(?:the\s+)?{upper_text}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(0) if match else text
+
+
+def _action_target_relation(placeholder_text: str, action_placeholder: str, target: JsonDict) -> str | None:
+    action_end = placeholder_text.find(action_placeholder) + len(action_placeholder)
+    if action_end < len(action_placeholder):
+        return None
+    tail = placeholder_text[action_end:]
+    match = re.search(r"\b(?P<relation>to|into|from|within|in)\b.*\brange\s+(?:between|of)\b", tail, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group("relation").lower()
+
+
 def _range_bounds(left: str, left_operator: str, right: str, right_operator: str) -> JsonDict | None:
     if left_operator in {"<", "<="} and right_operator in {"<", "<="}:
         return {
@@ -759,7 +974,7 @@ def _range_bounds(left: str, left_operator: str, right: str, right_operator: str
 def _assign_range_bound(condition: JsonDict, prefix: str, entity: JsonDict) -> None:
     entity_type = str(entity.get("type", "")).upper()
     if entity_type == "PARAMETER":
-        condition[f"{prefix}_parameter"] = str(entity.get("canonical_name") or entity.get("mention"))
+        condition[f"{prefix}_parameter"] = _parameter_name(entity)
         return
 
     parsed_value = _value_from_entity(entity)
@@ -882,7 +1097,7 @@ def _parse_quantified_signal_member_right(
     signal_placeholder = signals[0]
     right_placeholder = right_entities[0]
     match = re.search(
-        rf"\b(?P<quantifier>(?:(?:at\s*least|atleast)\s+)?one\s+of|both(?:\s+of)?|all(?:\s+of)?)\s+"
+        rf"\b(?P<quantifier>(?:(?:at\s*least|atleast)\s+)?one(?:\s+of)?|both(?:\s+of)?|all(?:\s+of)?)\s+"
         rf"(?:the\s+)?{re.escape(signal_placeholder)}\s+"
         rf"{RELATION_PATTERN.pattern}\s+{re.escape(right_placeholder)}\b",
         placeholder_text,
@@ -1067,6 +1282,65 @@ def _parse_single_signal_right_duration_qualifier(
     return [condition]
 
 
+def _parse_signal_adjacent_parameter_condition(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 1:
+        return []
+
+    parameters = _ordered_placeholders(placeholder_text, _placeholders_by_type(placeholder_map, "PARAMETER"))
+    if len(parameters) < 2:
+        return []
+
+    signal_placeholder = signals[0]
+    adjacent = _adjacent_parameter_sequence(placeholder_text, parameters)
+    if len(adjacent) < 2:
+        return []
+
+    first_parameter = adjacent[0]
+    if not _has_relation_or_operator_between(placeholder_text, signal_placeholder, first_parameter):
+        return []
+
+    synthetic_parameter = _synthetic_parameter_entity_from_placeholders(adjacent, placeholder_map)
+    condition = _condition_for_right_entity(
+        original_text,
+        placeholder_map[signal_placeholder]["entity"],
+        synthetic_parameter,
+        operator=_operator_for_right_placeholder(placeholder_text, signal_placeholder, [first_parameter], first_parameter),
+    )
+    if not condition:
+        return []
+    condition["parser"] = "syntactic"
+    return [condition]
+
+
+def _adjacent_parameter_sequence(placeholder_text: str, parameters: List[str]) -> List[str]:
+    for start_index in range(len(parameters) - 1):
+        sequence = [parameters[start_index]]
+        for next_parameter in parameters[start_index + 1 :]:
+            previous = sequence[-1]
+            separator = placeholder_text[placeholder_text.find(previous) + len(previous) : placeholder_text.find(next_parameter)]
+            if re.fullmatch(r"\s+", separator or ""):
+                sequence.append(next_parameter)
+                continue
+            break
+        if len(sequence) > 1:
+            return sequence
+    return []
+
+
+def _synthetic_parameter_entity_from_placeholders(parameters: List[str], placeholder_map: JsonDict) -> JsonDict:
+    parts = [
+        str(placeholder_map[parameter]["entity"].get("canonical_name") or placeholder_map[parameter]["entity"].get("mention"))
+        for parameter in parameters
+    ]
+    canonical_name = _canonical_parameter_name(" ".join(parts))
+    return {"mention": canonical_name, "type": "PARAMETER", "canonical_name": canonical_name}
+
+
 def _parse_single_signal_multi_right(
     original_text: str,
     placeholder_text: str,
@@ -1226,6 +1500,64 @@ def _signal_condition_from_segment(
     return condition
 
 
+def _component_condition_from_segment(
+    original_text: str,
+    segment_text: str,
+    components: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    segment_components = [component for component in components if component in segment_text]
+    segment_rights = [right for right in right_entities if right in segment_text]
+    if len(segment_components) != 1 or len(segment_rights) != 1:
+        return None
+
+    state_placeholder = segment_rights[0]
+    if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
+        return None
+
+    state_modifier = _component_state_modifier_between(segment_text, segment_components[0], state_placeholder)
+    if state_modifier is None:
+        return None
+    return _condition_for_component_state(
+        original_text,
+        placeholder_map[segment_components[0]]["entity"],
+        placeholder_map[state_placeholder]["entity"],
+        state_modifier=state_modifier,
+    )
+
+
+def _feature_condition_from_segment(
+    original_text: str,
+    segment_text: str,
+    features: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    segment_features = [feature for feature in features if feature in segment_text]
+    segment_rights = [right for right in right_entities if right in segment_text]
+    if len(segment_features) != 1 or len(segment_rights) != 1:
+        return None
+
+    state_placeholder = segment_rights[0]
+    if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
+        return None
+    if not _has_relation_or_operator_between(segment_text, segment_features[0], state_placeholder):
+        return None
+
+    feature = placeholder_map[segment_features[0]]["entity"]
+    state = placeholder_map[state_placeholder]["entity"]
+    operator = _operator_for_right_placeholder(segment_text, segment_features[0], [state_placeholder], state_placeholder)
+    return {
+        "type": "feature_state_condition",
+        "mention": f"{_display_entity_mention(original_text, feature)} {operator} {state.get('canonical_name') or state.get('mention')}",
+        "feature": str(feature.get("canonical_name") or feature.get("mention")),
+        "operator": operator,
+        "required_state": str(state.get("canonical_name") or state.get("mention")),
+        "need_review": False,
+    }
+
+
 def _condition_for_right_entity(
     original_text: str,
     signal: JsonDict,
@@ -1255,7 +1587,7 @@ def _condition_for_right_entity(
         return condition
 
     if right_type == "PARAMETER":
-        parameter_name = str(right_entity.get("canonical_name") or right_entity.get("mention"))
+        parameter_name = _parameter_name(right_entity)
         return {
             "type": "parameter_threshold_condition",
             "mention": f"{signal_mention} {operator} {parameter_name}",
@@ -1687,7 +2019,7 @@ def _duration_qualifier_from_placeholder_text(
 
 
 def _duration_qualifier_from_text(text: str, parameter: JsonDict) -> JsonDict | None:
-    parameter_name = str(parameter.get("canonical_name") or parameter.get("mention"))
+    parameter_name = _parameter_name(parameter)
     for field_name in ("mention", "canonical_name"):
         value = str(parameter.get(field_name, "")).strip()
         if not value:
@@ -1908,6 +2240,21 @@ def _display_entity_mention(text: str, entity: JsonDict) -> str:
         if value and re.search(rf"(?<!\w){re.escape(value)}(?!\w)", text, flags=re.IGNORECASE):
             return value.strip("{}").strip()
     return str(entity.get("mention") or entity.get("canonical_name") or "").strip("{}").strip()
+
+
+def _parameter_name(entity: JsonDict) -> str:
+    return _canonical_parameter_name(str(entity.get("canonical_name") or entity.get("mention")))
+
+
+def _canonical_parameter_name(text: str) -> str:
+    cleaned = text.strip()
+    if re.fullmatch(r"P_[A-Z0-9_]+", cleaned, flags=re.IGNORECASE):
+        return cleaned.upper()
+    tokens = re.findall(r"[A-Za-z0-9]+", cleaned)
+    if not tokens:
+        return cleaned
+    body = "_".join(token.upper() for token in tokens)
+    return body if body.startswith("P_") else f"P_{body}"
 
 
 def _value_from_entity(entity: JsonDict) -> JsonDict | None:

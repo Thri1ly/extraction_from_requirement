@@ -75,9 +75,10 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
     assert "- Parsed without review: 1" in report
     assert "- Parsed with review: 2" in report
     assert "- Unparsed:" not in report
-    assert "- Average overall confidence: 0.52" in report
+    assert "- Average overall confidence: 0.45" in report
     assert "REQ_REVIEW" in report
-    assert "state_definition_condition" in report
+    assert "condition_group" in report
+    assert "state_definition_condition" not in report
 
     parsed_without_review_md = tmp_path / "debug_report.parsed_without_review.md"
     parsed_with_review_md = tmp_path / "debug_report.parsed_with_review.md"

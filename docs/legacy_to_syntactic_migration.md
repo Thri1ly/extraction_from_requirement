@@ -29,7 +29,8 @@ src/parser/legacy_archive/atomic_condition_parser_legacy_full.py
 These rules remain in the active legacy fallback order because they are not fully migrated
 or intentionally remain legacy-only for now:
 
-- `parse_state_definition_conditions`
+- `parse_state_definition_conditions` (compatibility entry point; emits `condition_group`
+  with `nlp_condition` and `expression_condition`, not the old state-definition type)
 - `parse_range_conditions`
 - `parse_redundant_signal_validity`
 - `parse_quantified_signal_member_state_conditions`
@@ -42,7 +43,8 @@ or intentionally remain legacy-only for now:
 - `parse_threshold_conditions`
 
 `parse_bracketed_definition_conditions` remains a pre-fallback early return in
-`parse_atomic_conditions`.
+`parse_atomic_conditions`; it also emits the same parenthesized semantic/expression
+`condition_group` shape.
 
 ## 2026-06-14 Second Batch In Progress
 
