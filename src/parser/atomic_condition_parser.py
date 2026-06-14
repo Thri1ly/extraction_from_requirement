@@ -80,7 +80,36 @@ def _legacy_parenthesized_condition_group(
     expression_condition: JsonDict,
     normalized_entities: List[JsonDict],
 ) -> JsonDict:
-    nlp_condition: JsonDict = {
+    outer_condition = _legacy_outer_condition(outer_text, normalized_entities)
+    expression_condition = dict(expression_condition)
+    expression_condition.setdefault("parser", "legacy")
+    group = {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": text,
+        "outer_condition": outer_condition,
+        "expression_condition": expression_condition,
+        "children": [outer_condition, expression_condition],
+        "parser": "legacy",
+        "need_review": bool(outer_condition.get("need_review") or expression_condition.get("need_review")),
+    }
+    if outer_condition.get("type") == "nlp_condition":
+        group["nlp_condition"] = outer_condition
+    return group
+
+
+def _legacy_outer_condition(outer_text: str, normalized_entities: List[JsonDict]) -> JsonDict:
+    parsed_outer = [
+        condition
+        for condition in parse_atomic_conditions(outer_text, normalized_entities)
+        if condition.get("type") != "syntactic_fallback_condition"
+    ]
+    if len(parsed_outer) == 1:
+        outer_condition = dict(parsed_outer[0])
+        outer_condition.setdefault("parser", "legacy")
+        return outer_condition
+
+    return {
         "type": "nlp_condition",
         "mention": outer_text,
         "text": outer_text,
@@ -94,18 +123,6 @@ def _legacy_parenthesized_condition_group(
         "parser": "legacy",
         "need_review": True,
         "review_reason": "natural-language condition parsed by nlp fallback",
-    }
-    expression_condition = dict(expression_condition)
-    expression_condition.setdefault("parser", "legacy")
-    return {
-        "type": "condition_group",
-        "logic": "AND",
-        "mention": text,
-        "nlp_condition": nlp_condition,
-        "expression_condition": expression_condition,
-        "children": [nlp_condition, expression_condition],
-        "parser": "legacy",
-        "need_review": bool(nlp_condition.get("need_review") or expression_condition.get("need_review")),
     }
 
 

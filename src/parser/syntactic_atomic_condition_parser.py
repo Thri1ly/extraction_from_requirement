@@ -71,7 +71,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions.extend(_parse_feature_state_condition(text, placeholder_text, features, right_entities, placeholder_map))
     conditions.extend(_parse_feature_action_condition(text, placeholder_text, features, actions, placeholder_map))
     conditions.extend(_parse_signal_action_condition(text, placeholder_text, signals, actions, components, placeholder_map))
-    conditions.extend(_parse_parenthesized_semantic_expression_condition(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_parenthesized_semantic_expression_condition(text, placeholder_text, signals, components, features, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_independent_signal_conditions(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -454,6 +454,8 @@ def _parse_parenthesized_semantic_expression_condition(
     original_text: str,
     placeholder_text: str,
     signals: List[str],
+    components: List[str],
+    features: List[str],
     right_entities: List[str],
     placeholder_map: JsonDict,
 ) -> List[JsonDict]:
@@ -464,12 +466,16 @@ def _parse_parenthesized_semantic_expression_condition(
         outer_text = placeholder_text[: match.start()].strip()
         body = match.group("body").strip()
         outer_original_text = original_text.split("(", 1)[0].strip()
-        outer_nlp_condition = _nlp_condition_from_segment(
+        outer_condition = _outer_condition_from_parenthesized_segment(
             outer_original_text,
             outer_text,
+            signals,
+            components,
+            features,
+            right_entities,
             placeholder_map,
         )
-        if not outer_nlp_condition:
+        if not outer_condition:
             continue
         expression_condition = _expression_condition_from_parenthesized_segment(
             original_text,
@@ -481,9 +487,38 @@ def _parse_parenthesized_semantic_expression_condition(
         if not expression_condition:
             continue
 
-        return [_parenthesized_semantic_expression_group(original_text, outer_nlp_condition, expression_condition)]
+        return [_parenthesized_semantic_expression_group(original_text, outer_condition, expression_condition)]
 
     return []
+
+
+def _outer_condition_from_parenthesized_segment(
+    original_segment_text: str,
+    segment_text: str,
+    signals: List[str],
+    components: List[str],
+    features: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    formal_condition = _condition_from_complete_clause_segment(
+        original_segment_text,
+        segment_text,
+        signals,
+        components,
+        features,
+        right_entities,
+        placeholder_map,
+    )
+    if formal_condition:
+        formal_condition["parser"] = "syntactic"
+        return formal_condition
+
+    return _nlp_condition_from_segment(
+        original_segment_text,
+        segment_text,
+        placeholder_map,
+    )
 
 
 def _expression_condition_from_parenthesized_segment(
@@ -521,20 +556,23 @@ def _single_placeholder_in_segment(segment_text: str, placeholders: List[str]) -
 
 def _parenthesized_semantic_expression_group(
     original_text: str,
-    nlp_condition: JsonDict,
+    outer_condition: JsonDict,
     expression_condition: JsonDict,
 ) -> JsonDict:
-    need_review = bool(nlp_condition.get("need_review") or expression_condition.get("need_review"))
-    return {
+    need_review = bool(outer_condition.get("need_review") or expression_condition.get("need_review"))
+    group = {
         "type": "condition_group",
         "logic": "AND",
         "mention": original_text,
-        "nlp_condition": nlp_condition,
+        "outer_condition": outer_condition,
         "expression_condition": expression_condition,
-        "children": [nlp_condition, expression_condition],
+        "children": [outer_condition, expression_condition],
         "parser": "syntactic",
         "need_review": need_review,
     }
+    if outer_condition.get("type") == "nlp_condition":
+        group["nlp_condition"] = outer_condition
+    return group
 
 
 def _nlp_condition_from_segment(

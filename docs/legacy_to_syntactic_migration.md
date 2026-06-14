@@ -30,7 +30,7 @@ These rules remain in the active legacy fallback order because they are not full
 or intentionally remain legacy-only for now:
 
 - `parse_state_definition_conditions` (compatibility entry point; emits `condition_group`
-  with `nlp_condition` and `expression_condition`, not the old state-definition type)
+  with `outer_condition` and `expression_condition`, not the old state-definition type)
 - `parse_range_conditions`
 - `parse_redundant_signal_validity`
 - `parse_quantified_signal_member_state_conditions`

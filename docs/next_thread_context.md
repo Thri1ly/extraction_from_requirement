@@ -107,24 +107,27 @@ Dictionary misses should not be dropped by default. They should pass into parsin
 
 Parenthesized semantic/expression forms are kept as independent parts in one group.
 For `xxx1 (xxx2)`, when `xxx2` is a formal expression, the output is a `condition_group`
-with top-level `nlp_condition` for `xxx1`, top-level `expression_condition` for `xxx2`,
-and `children=[nlp_condition, expression_condition]`. The two parts must not infer fields
-from each other. For example, `SIGNAL1 is STATE1(SIGNAL2 == FULL)` keeps the outer phrase
-as natural language and the parenthesized expression as `SIGNAL2 == FULL`, not a cross-pair
-of `SIGNAL2` with `STATE1`.
+with top-level `outer_condition` for `xxx1`, top-level `expression_condition` for `xxx2`,
+and `children=[outer_condition, expression_condition]`. The outer segment first tries
+existing formal rules; if none match, it falls back to `nlp_condition`. When that fallback
+is used, the group also exposes `nlp_condition` as a compatibility alias for
+`outer_condition`. The two parts must not infer fields from each other. For example,
+`SIGNAL1 is STATE1(SIGNAL2 == FULL)` now emits a formal outer `signal_state_condition`
+and an inner `SIGNAL2 == FULL` expression condition, not a cross-pair of `SIGNAL2` with
+`STATE1`.
 
 Passive detection events with parenthesized signal comparisons are kept as one `condition_group`
-with top-level `nlp_condition` and `expression_condition` rather than only returning the
+with top-level `outer_condition` and `expression_condition` rather than only returning the
 parenthesized expression. For example,
 `a xxx is detected in ECU1 (SIGNAL1 < SIGNAL2 for a xxx period of at least P_TIME)`
-emits an outer `nlp_condition` (`subject=xxx`, `predicate=detect`, `voice=passive`,
+emits an outer `nlp_condition` via `outer_condition` (`subject=xxx`, `predicate=detect`, `voice=passive`,
 `locations=[{relation=in, text=ECU1}]`, plus `semantic_chunks`) and an inner
 `signal_comparison_condition`.
 The duration phrase is attached to the comparison as a `duration` qualifier.
 
 The parser public entry points should not emit `state_definition_condition`. Legacy
-parenthesized helpers now return the same `condition_group` shape with `nlp_condition` and
-`expression_condition` instead of exposing the old type.
+parenthesized helpers now return the same `condition_group` shape with `outer_condition`
+and `expression_condition` instead of exposing the old type.
 
 Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` now emit only the signal-state condition; enum values are parsing evidence and are not emitted as threshold children.
 

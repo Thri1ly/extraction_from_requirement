@@ -260,14 +260,22 @@ def test_syntactic_parser_keeps_parenthesized_independent_signal_conditions_sepa
     assert parsed["type"] == "condition_group"
     assert parsed["logic"] == "AND"
     assert parsed["need_review"] is True
-    assert parsed["nlp_condition"]["type"] == "nlp_condition"
-    assert parsed["nlp_condition"]["mention"] == "SIGNAL1 is STATE1"
+    assert "nlp_condition" not in parsed
+    assert parsed["outer_condition"] == {
+        "type": "signal_state_condition",
+        "mention": "SIGNAL1 == STATE1",
+        "signal": "SIGNAL1",
+        "operator": "==",
+        "required_state": "STATE1",
+        "need_review": False,
+        "parser": "syntactic",
+    }
     assert parsed["expression_condition"]["type"] == "signal_state_condition"
     assert parsed["expression_condition"]["signal"] == "SIGNAL2"
     assert parsed["expression_condition"]["required_state"] == "FULL"
     assert parsed["expression_condition"]["need_review"] is True
     assert parsed["expression_condition"]["review_reason"] == "state inferred from syntax"
-    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
+    assert parsed["children"] == [parsed["outer_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_comparison_duration():
@@ -332,6 +340,7 @@ def test_syntactic_parser_replaces_state_definition_with_independent_parenthesiz
     assert parsed["type"] == "condition_group"
     assert parsed["logic"] == "AND"
     assert "state_definition_condition" not in str(parsed)
+    assert parsed["outer_condition"] == parsed["nlp_condition"]
     assert parsed["nlp_condition"] == {
         "type": "nlp_condition",
         "mention": "Static condition",
@@ -788,7 +797,7 @@ def test_syntactic_parser_placeholderizes_repeated_same_value_mentions():
     assert analysis["placeholder_text"] == "SIGNAL_1 is VALUE_1 (SIGNAL_2 is equal to VALUE_2)"
 
 
-def test_syntactic_parser_composes_parenthesized_signal_value_expression_with_outer_semantics():
+def test_syntactic_parser_composes_parenthesized_signal_value_expression_with_outer_formal_condition():
     parsed = parse_condition_line(
         "assist capability is zero (S_ASSIST_CAPABILITY is equal to zero)",
         normalized_entities=[
@@ -799,8 +808,18 @@ def test_syntactic_parser_composes_parenthesized_signal_value_expression_with_ou
     )
 
     assert parsed["type"] == "condition_group"
-    assert parsed["nlp_condition"]["type"] == "nlp_condition"
-    assert parsed["nlp_condition"]["mention"] == "assist capability is zero"
+    assert "nlp_condition" not in parsed
+    assert parsed["outer_condition"] == {
+        "type": "threshold_condition",
+        "mention": "assist capability == 0",
+        "signal": "S_ASSIST_CAPABILITY",
+        "transform": None,
+        "operator": "==",
+        "value": 0,
+        "unit": None,
+        "parser": "syntactic",
+        "need_review": False,
+    }
     assert parsed["expression_condition"] == {
         "type": "threshold_condition",
         "mention": "S_ASSIST_CAPABILITY == 0",
@@ -812,7 +831,7 @@ def test_syntactic_parser_composes_parenthesized_signal_value_expression_with_ou
         "parser": "syntactic",
         "need_review": False,
     }
-    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
+    assert parsed["children"] == [parsed["outer_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_placeholderizes_repeated_same_state_mentions():
@@ -828,7 +847,7 @@ def test_syntactic_parser_placeholderizes_repeated_same_state_mentions():
     assert analysis["placeholder_text"] == "SIGNAL_1 is STATE_1 (SIGNAL_2 is STATE_2)"
 
 
-def test_syntactic_parser_composes_parenthesized_signal_state_expression_with_outer_semantics():
+def test_syntactic_parser_composes_parenthesized_signal_state_expression_with_outer_formal_condition():
     parsed = parse_condition_line(
         "column torque quality is invalid (S_COLUMN_TORQUE_QF is invalid)",
         normalized_entities=[
@@ -839,8 +858,16 @@ def test_syntactic_parser_composes_parenthesized_signal_state_expression_with_ou
     )
 
     assert parsed["type"] == "condition_group"
-    assert parsed["nlp_condition"]["type"] == "nlp_condition"
-    assert parsed["nlp_condition"]["mention"] == "column torque quality is invalid"
+    assert "nlp_condition" not in parsed
+    assert parsed["outer_condition"] == {
+        "type": "signal_state_condition",
+        "mention": "column torque quality == invalid",
+        "signal": "S_COLUMN_TORQUE_QF",
+        "operator": "==",
+        "required_state": "invalid",
+        "parser": "syntactic",
+        "need_review": False,
+    }
     assert parsed["expression_condition"] == {
         "type": "signal_state_condition",
         "mention": "S_COLUMN_TORQUE_QF == invalid",
@@ -850,7 +877,7 @@ def test_syntactic_parser_composes_parenthesized_signal_state_expression_with_ou
         "parser": "syntactic",
         "need_review": False,
     }
-    assert parsed["children"] == [parsed["nlp_condition"], parsed["expression_condition"]]
+    assert parsed["children"] == [parsed["outer_condition"], parsed["expression_condition"]]
 
 
 def test_syntactic_parser_parses_predicateless_signal_state_condition():

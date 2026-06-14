@@ -220,15 +220,18 @@ condition_group
 When `xxx2` is a formal expression, the group uses `logic=AND` and exposes two explicit
 top-level labels:
 
-- `nlp_condition` for the outer natural-language segment.
+- `outer_condition` for the outer segment. The parser first tries existing formal rules;
+  if no formal rule matches, it falls back to an `nlp_condition`.
 - `expression_condition` for the parenthesized formal condition.
 
-`children` is `[nlp_condition, expression_condition]`. The two parts are parsed
-independently and must not infer fields from each other. For passive detected events, the
-outer `nlp_condition` may include fields such as `text`, `subject`, `predicate=detect`,
-`voice=passive`, `locations`, `semantic_chunks`, and `known_entities`. If the inner
-expression is a signal comparison, a trailing duration phrase is attached in `qualifiers`
-and is not emitted as a separate parameter threshold condition.
+`children` is `[outer_condition, expression_condition]`. If `outer_condition` is an
+`nlp_condition`, the group also exposes the compatibility label `nlp_condition` pointing
+to the same object. The two parts are parsed independently and must not infer fields from
+each other. For passive detected events, the outer semantic fallback may include fields
+such as `text`, `subject`, `predicate=detect`, `voice=passive`, `locations`,
+`semantic_chunks`, and `known_entities`. If the inner expression is a signal comparison,
+a trailing duration phrase is attached in `qualifiers` and is not emitted as a separate
+parameter threshold condition.
 
 The parser public entry points do not emit `state_definition_condition`. Legacy
 parenthesized expression helpers return this same `condition_group` shape.
