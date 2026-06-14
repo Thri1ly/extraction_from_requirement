@@ -129,14 +129,32 @@ The parser public entry points should not emit `state_definition_condition`. Leg
 parenthesized helpers now return the same `condition_group` shape with `outer_condition`
 and `expression_condition` instead of exposing the old type.
 
-Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` now emit only the signal-state condition; enum values are parsing evidence and are not emitted as threshold children.
+Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` still emit only the
+single signal-state condition when there is one enum label; enum values are parsing
+evidence in that narrow case. Shared or alternative enum labels are preserved as
+`signal_enum_condition` so the parser does not collapse them to plain state equality:
+`S_MODE_1 and S_MODE_2 are equal to "0x1: Valid"` becomes an `AND` group of enum
+conditions, and `S_MODE is equal to "0x1: Valid" or "0x2: Invalid"` becomes an `OR` group
+of enum conditions. The `VALUE:STATE` placeholder shape also handles malformed quote
+variants such as `"0x1:"STATE2` when both entities are present.
 
 When a clear relation/operator is followed by a state-like phrase that was not normalized as `STATE`, selected syntactic rules may infer a low-confidence `STATE` with `need_review=true`, for example `FULL` after `==` or `fail operation` in a right-side state list.
+
+Signal-state predicates support symbol operators `=`, `==`, and `!=`, including quoted
+right-side states. Left-side descriptors are preserved in `mention`, for example
+`SIGNAL control is STATE` and `redundant SIGNAL = STATE`, while the normalized `signal`
+field still contains the canonical signal only.
+
+`abs(SIGNAL) OP PARAMETER` is parsed as `parameter_threshold_condition` with
+`transform=ABS`. Parenthesized same-canonical signal aliases such as
+`SIGNAL_ALIAS(SIGNAL_CANON) is equal to VALUE` parse against the inner signal.
 
 Complete `AND`/`OR` clauses are parsed clause-by-clause when each side is a full condition,
 for example `S_STATUS is Active and EPS is Degraded` becomes an `AND` group with a
 `signal_state_condition` child and a `component_state_condition` child. This avoids
-cross-pairing the second right-side state with the first signal.
+cross-pairing the second right-side state with the first signal. Complete component-only
+clauses such as `COMPONENT1 is STATE1 and COMPONENT2 is STATE2` are covered by the same
+clause-by-clause parser.
 
 Quantified signal and component member rules support `at least one SIGNAL is STATE` in
 addition to `at least one of SIGNAL is STATE`; `at least one` maps to

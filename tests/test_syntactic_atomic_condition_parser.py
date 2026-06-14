@@ -1205,6 +1205,186 @@ def test_syntactic_parser_splits_value_state_enum_when_entities_are_missing():
     assert parsed["enum_value"] == "0x1"
 
 
+def test_syntactic_parser_parses_symbol_state_equality_and_inequality():
+    for text, operator in (
+        ("SIGNAL1 != STATE1", "!="),
+        ("SIGNAL1 = STATE1", "=="),
+        ('SIGNAL1 = "STATE1"', "=="),
+    ):
+        parsed = parse_condition_line(
+            text,
+            normalized_entities=[
+                {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+                {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            ],
+        )
+
+        assert parsed["type"] == "signal_state_condition"
+        assert parsed["signal"] == "SIGNAL1"
+        assert parsed["operator"] == operator
+        assert parsed["required_state"] == "STATE1"
+        assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_keeps_shared_enum_value_state_as_enum_conditions_for_multiple_signals():
+    parsed = parse_condition_line(
+        'SIGNAL1 and SIGNAL2 are equal to "VALUE1:STATE1"',
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "VALUE1", "type": "VALUE", "canonical_name": "VALUE1"},
+            {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "mention": 'SIGNAL1 and SIGNAL2 are equal to "VALUE1:STATE1"',
+        "children": [
+            {
+                "type": "signal_enum_condition",
+                "mention": 'SIGNAL1 == "VALUE1:STATE1"',
+                "signal": "SIGNAL1",
+                "operator": "==",
+                "value": "VALUE1",
+                "required_state": "STATE1",
+                "need_review": False,
+            },
+            {
+                "type": "signal_enum_condition",
+                "mention": 'SIGNAL2 == "VALUE1:STATE1"',
+                "signal": "SIGNAL2",
+                "operator": "==",
+                "value": "VALUE1",
+                "required_state": "STATE1",
+                "need_review": False,
+            },
+        ],
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_keeps_enum_value_state_options_as_enum_conditions_for_one_signal():
+    parsed = parse_condition_line(
+        'SIGNAL1 is equal to "VALUE1:STATE1" or "VALUE2:STATE2"',
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "VALUE1", "type": "VALUE", "canonical_name": "VALUE1"},
+            {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            {"mention": "VALUE2", "type": "VALUE", "canonical_name": "VALUE2"},
+            {"mention": "STATE2", "type": "STATE", "canonical_name": "STATE2"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert [child["type"] for child in parsed["children"]] == ["signal_enum_condition", "signal_enum_condition"]
+    assert [(child["value"], child["required_state"]) for child in parsed["children"]] == [
+        ("VALUE1", "STATE1"),
+        ("VALUE2", "STATE2"),
+    ]
+    assert [child["signal"] for child in parsed["children"]] == ["SIGNAL1", "SIGNAL1"]
+
+
+def test_syntactic_parser_keeps_malformed_quoted_enum_option_as_enum_condition():
+    parsed = parse_condition_line(
+        'SIGNAL1 is equal to "VALUE1:STATE1" or "0x1:"STATE2',
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "VALUE1", "type": "VALUE", "canonical_name": "VALUE1"},
+            {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            {"mention": "0x1", "type": "VALUE", "canonical_name": "0x1"},
+            {"mention": "STATE2", "type": "STATE", "canonical_name": "STATE2"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert [(child["value"], child["required_state"]) for child in parsed["children"]] == [
+        ("VALUE1", "STATE1"),
+        ("0x1", "STATE2"),
+    ]
+
+
+def test_syntactic_parser_preserves_left_signal_phrase_for_state_conditions():
+    for text, expected_mention in (
+        ("SIGNAL1 control is STATE1", "SIGNAL1 control == STATE1"),
+        ("redundant SIGNAL1 = STATE1", "redundant SIGNAL1 == STATE1"),
+    ):
+        parsed = parse_condition_line(
+            text,
+            normalized_entities=[
+                {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+                {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            ],
+        )
+
+        assert parsed["type"] == "signal_state_condition"
+        assert parsed["mention"] == expected_mention
+        assert parsed["signal"] == "SIGNAL1"
+        assert parsed["required_state"] == "STATE1"
+
+
+def test_syntactic_parser_preserves_abs_transform_for_parenthesized_signal_parameter_condition():
+    parsed = parse_condition_line(
+        "abs(SIGNAL1) <= PARAMETER1",
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "PARAMETER1", "type": "PARAMETER", "canonical_name": "PARAMETER1"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "parameter_threshold_condition",
+        "mention": "ABS(SIGNAL1) <= P_PARAMETER1",
+        "signal": "SIGNAL1",
+        "operator": "<=",
+        "parameter": "P_PARAMETER1",
+        "transform": "ABS",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_parenthesized_same_canonical_signal_value_condition():
+    parsed = parse_condition_line(
+        "SIGNAL1(SIGNAL2) is equal to VALUE1",
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL_CANON"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL_CANON"},
+            {"mention": "VALUE1", "type": "VALUE", "canonical_name": "VALUE1"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["mention"] == "SIGNAL2 == VALUE1"
+    assert parsed["signal"] == "SIGNAL_CANON"
+    assert parsed["operator"] == "=="
+    assert parsed["value"] == "VALUE1"
+    assert parsed["parser"] == "syntactic"
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_complete_component_and_clause_group():
+    parsed = parse_condition_line(
+        "COMPONENT1 is STATE1 and COMPONENT2 is STATE2",
+        normalized_entities=[
+            {"mention": "COMPONENT1", "type": "COMPONENT", "canonical_name": "COMPONENT1"},
+            {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            {"mention": "COMPONENT2", "type": "COMPONENT", "canonical_name": "COMPONENT2"},
+            {"mention": "STATE2", "type": "STATE", "canonical_name": "STATE2"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert [child["type"] for child in parsed["children"]] == ["component_state_condition", "component_state_condition"]
+    assert [child["component"] for child in parsed["children"]] == ["COMPONENT1", "COMPONENT2"]
+    assert [child["required_state"] for child in parsed["children"]] == ["STATE1", "STATE2"]
+
+
 def test_syntactic_parser_parses_parenthesized_signal_trend_condition():
     parsed = parse_condition_line(
         "request torque (actual torque) increases",

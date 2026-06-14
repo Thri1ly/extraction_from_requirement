@@ -21,6 +21,7 @@ SYNTACTIC_COMPOUND_OPERATOR_PATTERNS = [
     (r"\bequals?\s+(?:to\s+)?(?:or|and|and/or|and\s*/\s*or)?\s*greater\s+than\b", ">="),
     (r"\bequals?\s+(?:to\s+)?(?:or|and|and/or|and\s*/\s*or)?\s*less\s+than\b", "<="),
 ]
+SYNTACTIC_OPERATOR_PATTERN = "|".join(re.escape(operator) for operator in sorted(OPERATOR_ALIASES, key=len, reverse=True))
 
 
 def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | None = None) -> List[JsonDict]:
@@ -78,6 +79,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions.extend(_parse_parenthesized_signal_trend_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_bracketed_range_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_range_between_condition(text, placeholder_text, signals, placeholder_map))
+    conditions.extend(_parse_signal_enum_condition_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_signal_value_state_clause_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_quantified_signal_member_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_without_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -411,13 +413,13 @@ def _parse_parenthesized_signal_state_with_predicate(
     if len(signals) != 2 or len(right_entities) != 1:
         return []
 
-    state_placeholder = right_entities[0]
-    if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
+    right_placeholder = right_entities[0]
+    if str(placeholder_map[right_placeholder]["entity"].get("type", "")).upper() not in {"STATE", "VALUE"}:
         return []
 
     match = re.search(
         rf"\b(?P<outer>SIGNAL_\d+)\s*\(\s*(?P<inner>SIGNAL_\d+)\s*\)\s+"
-        rf"{RELATION_PATTERN.pattern}\s+{re.escape(state_placeholder)}\b",
+        rf"{RELATION_PATTERN.pattern}(?:\s+equal\s+to)?\s+{re.escape(right_placeholder)}\b",
         placeholder_text,
         flags=re.IGNORECASE,
     )
@@ -429,8 +431,9 @@ def _parse_parenthesized_signal_state_with_predicate(
     condition = _condition_for_right_entity(
         original_text,
         placeholder_map[inner_signal]["entity"],
-        placeholder_map[state_placeholder]["entity"],
-        operator=_operator_for_right_placeholder(placeholder_text, inner_signal, [state_placeholder], state_placeholder),
+        placeholder_map[right_placeholder]["entity"],
+        operator=_operator_for_right_placeholder(placeholder_text, inner_signal, [right_placeholder], right_placeholder),
+        signal_mention_override=_display_entity_mention(original_text, placeholder_map[inner_signal]["entity"]),
     )
     if not condition:
         return []
@@ -1122,6 +1125,139 @@ def _value_state_clause_group(
     return state_condition
 
 
+def _parse_signal_enum_condition_group(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if not signals:
+        return []
+
+    pairs = _enum_value_state_pairs(placeholder_text, placeholder_map)
+    if not pairs:
+        return []
+
+    ordered_signals = _ordered_placeholders(placeholder_text, signals)
+    if len(ordered_signals) > 1 and len(pairs) == 1:
+        logic = _placeholder_list_logic(placeholder_text, ordered_signals)
+        if not logic:
+            return []
+        pair = pairs[0]
+        if not _has_relation_or_operator_between(placeholder_text, ordered_signals[-1], pair["value"]):
+            return []
+        operator = _operator_for_right_placeholder(placeholder_text, ordered_signals[-1], [pair["value"]], pair["value"])
+        children = [
+            _signal_enum_condition(
+                original_text,
+                placeholder_map[signal]["entity"],
+                placeholder_map[pair["value"]]["entity"],
+                placeholder_map[pair["state"]]["entity"],
+                operator,
+            )
+            for signal in ordered_signals
+        ]
+        return [_enum_condition_group(original_text, logic, children)]
+
+    if len(ordered_signals) == 1 and len(pairs) > 1:
+        signal = ordered_signals[0]
+        if not _has_relation_or_operator_between(placeholder_text, signal, pairs[0]["value"]):
+            return []
+        logic = _enum_pair_list_logic(placeholder_text, pairs)
+        if not logic:
+            return []
+        operator = _operator_for_right_placeholder(placeholder_text, signal, [pairs[0]["value"]], pairs[0]["value"])
+        children = [
+            _signal_enum_condition(
+                original_text,
+                placeholder_map[signal]["entity"],
+                placeholder_map[pair["value"]]["entity"],
+                placeholder_map[pair["state"]]["entity"],
+                operator,
+            )
+            for pair in pairs
+        ]
+        return [_enum_condition_group(original_text, logic, children)]
+
+    return []
+
+
+def _enum_condition_group(original_text: str, logic: str, children: List[JsonDict]) -> JsonDict:
+    return {
+        "type": "condition_group",
+        "logic": logic,
+        "mention": original_text,
+        "children": children,
+        "parser": "syntactic",
+        "need_review": any(bool(child.get("need_review")) for child in children),
+    }
+
+
+def _enum_value_state_pairs(placeholder_text: str, placeholder_map: JsonDict) -> List[JsonDict]:
+    values = _ordered_placeholders(placeholder_text, _placeholders_by_type(placeholder_map, "VALUE"))
+    states = _ordered_placeholders(placeholder_text, _placeholders_by_type(placeholder_map, "STATE"))
+    pairs: List[JsonDict] = []
+    used_states: set[str] = set()
+    for index, value in enumerate(values):
+        value_start = placeholder_text.find(value)
+        value_end = value_start + len(value)
+        next_value_start = placeholder_text.find(values[index + 1]) if index + 1 < len(values) else len(placeholder_text)
+        state = next(
+            (
+                candidate
+                for candidate in states
+                if candidate not in used_states
+                and value_end < placeholder_text.find(candidate) < next_value_start
+                and ":" in placeholder_text[value_end : placeholder_text.find(candidate)]
+            ),
+            None,
+        )
+        if not state:
+            continue
+        used_states.add(state)
+        pairs.append({"value": value, "state": state, "start": value_start, "end": placeholder_text.find(state) + len(state)})
+    return pairs
+
+
+def _enum_pair_list_logic(placeholder_text: str, pairs: List[JsonDict]) -> str | None:
+    has_and = False
+    has_or = False
+    for left, right in zip(pairs, pairs[1:]):
+        separator = placeholder_text[int(left["end"]) : int(right["start"])]
+        if re.search(r"\b(?:or|and/or)\b", separator, flags=re.IGNORECASE):
+            has_or = True
+        elif re.search(r"\band\b", separator, flags=re.IGNORECASE) or "," in separator:
+            has_and = True
+        else:
+            return None
+    if has_or:
+        return "OR"
+    if has_and:
+        return "AND"
+    return None
+
+
+def _signal_enum_condition(
+    original_text: str,
+    signal: JsonDict,
+    value: JsonDict,
+    state: JsonDict,
+    operator: str,
+) -> JsonDict:
+    value_name = str(value.get("canonical_name") or value.get("mention"))
+    state_name = str(state.get("canonical_name") or state.get("mention"))
+    signal_mention = _display_entity_mention(original_text, signal)
+    return {
+        "type": "signal_enum_condition",
+        "mention": f'{signal_mention} {operator} "{value_name}:{state_name}"',
+        "signal": str(signal.get("canonical_name") or signal.get("mention")),
+        "operator": operator,
+        "value": value_name,
+        "required_state": state_name,
+        "need_review": False,
+    }
+
+
 def _parse_quantified_signal_member_right(
     original_text: str,
     placeholder_text: str,
@@ -1390,7 +1526,7 @@ def _parse_single_signal_multi_right(
         return []
 
     ordered_rights = _ordered_placeholders(placeholder_text, right_entities)
-    if not _has_relation_between(placeholder_text, signals[0], ordered_rights[0]):
+    if not _has_relation_or_operator_between(placeholder_text, signals[0], ordered_rights[0]):
         return []
 
     logic = _placeholder_list_logic(placeholder_text, ordered_rights)
@@ -1447,7 +1583,7 @@ def _parse_multi_signal_single_right(
 
     ordered_signals = _ordered_placeholders(placeholder_text, signals)
     logic = _placeholder_list_logic(placeholder_text, ordered_signals)
-    if not logic or not _has_relation_between(placeholder_text, ordered_signals[-1], right_entities[0]):
+    if not logic or not _has_relation_or_operator_between(placeholder_text, ordered_signals[-1], right_entities[0]):
         return []
 
     right_entity = placeholder_map[right_entities[0]]["entity"]
@@ -1480,14 +1616,18 @@ def _parse_single_signal_single_right(
 ) -> List[JsonDict]:
     if len(signals) != 1 or len(right_entities) != 1:
         return []
-    if not _has_relation_between(placeholder_text, signals[0], right_entities[0]):
+    if not _has_relation_or_operator_between(placeholder_text, signals[0], right_entities[0]):
         return []
 
+    signal_mention = _left_operand_mention_from_placeholder_text(original_text, placeholder_text, signals[0], right_entities[0], placeholder_map)
+    transform = "ABS" if signal_mention.upper().startswith("ABS(") else None
     condition = _condition_for_right_entity(
         original_text,
         placeholder_map[signals[0]]["entity"],
         placeholder_map[right_entities[0]]["entity"],
         operator=_operator_for_right_placeholder(placeholder_text, signals[0], right_entities, right_entities[0]),
+        signal_mention_override=signal_mention,
+        transform=transform,
     )
     if not condition:
         return []
@@ -1520,6 +1660,7 @@ def _signal_condition_from_segment(
             placeholder_map[signal_placeholder]["entity"],
             placeholder_map[right_placeholder]["entity"],
             operator=_operator_for_right_placeholder(segment_text, signal_placeholder, [right_placeholder], right_placeholder),
+            signal_mention_override=_left_operand_mention_from_placeholder_text(original_text, segment_text, signal_placeholder, right_placeholder, placeholder_map),
         )
         return condition
 
@@ -1601,9 +1742,11 @@ def _condition_for_right_entity(
     signal: JsonDict,
     right_entity: JsonDict,
     operator: str = "==",
+    signal_mention_override: str | None = None,
+    transform: str | None = None,
 ) -> JsonDict | None:
     signal_name = str(signal.get("canonical_name") or signal.get("mention"))
-    signal_mention = _display_entity_mention(original_text, signal)
+    signal_mention = signal_mention_override or _display_entity_mention(original_text, signal)
     right_type = str(right_entity.get("type", "")).upper()
 
     if right_type == "STATE":
@@ -1626,7 +1769,7 @@ def _condition_for_right_entity(
 
     if right_type == "PARAMETER":
         parameter_name = _parameter_name(right_entity)
-        return {
+        condition: JsonDict = {
             "type": "parameter_threshold_condition",
             "mention": f"{signal_mention} {operator} {parameter_name}",
             "signal": signal_name,
@@ -1634,21 +1777,25 @@ def _condition_for_right_entity(
             "parameter": parameter_name,
             "need_review": False,
         }
+        if transform:
+            condition["transform"] = transform
+        return condition
 
     if right_type == "VALUE":
         parsed_value = _value_from_entity(right_entity)
         if parsed_value is None:
-            return None
-        return {
+            parsed_value = {"value": str(right_entity.get("canonical_name") or right_entity.get("mention")), "unit": right_entity.get("unit")}
+        condition = {
             "type": "threshold_condition",
             "mention": f"{signal_mention} {operator} {parsed_value['value']}",
             "signal": signal_name,
-            "transform": None,
+            "transform": transform,
             "operator": operator,
             "value": parsed_value["value"],
             "unit": parsed_value["unit"],
             "need_review": False,
         }
+        return condition
 
     return None
 
@@ -1911,6 +2058,44 @@ def _has_relation_or_operator_between(text: str, left_placeholder: str, right_pl
         return False
     separator = text[left_end:right_start]
     return bool(RELATION_PATTERN.search(separator) or _operator_from_text(separator) or re.search(r"\bin\s*$", separator, flags=re.IGNORECASE))
+
+
+def _left_operand_mention_from_placeholder_text(
+    original_text: str,
+    placeholder_text: str,
+    signal_placeholder: str,
+    right_placeholder: str,
+    placeholder_map: JsonDict,
+) -> str:
+    right_start = placeholder_text.find(right_placeholder)
+    if right_start < 0:
+        return _display_entity_mention(original_text, placeholder_map[signal_placeholder]["entity"])
+
+    left_text = placeholder_text[:right_start].strip().rstrip("\"'").strip()
+    left_text = _strip_trailing_relation_or_operator(left_text)
+    for placeholder, payload in sorted(placeholder_map.items(), key=lambda item: len(item[0]), reverse=True):
+        if placeholder not in left_text:
+            continue
+        left_text = left_text.replace(placeholder, _display_entity_mention(original_text, payload["entity"]))
+    left_text = re.sub(r"\babs\s*\(\s*([^()]+?)\s*\)", r"ABS(\1)", left_text, flags=re.IGNORECASE)
+    left_text = re.sub(r"\s+", " ", left_text).strip()
+    return left_text or _display_entity_mention(original_text, placeholder_map[signal_placeholder]["entity"])
+
+
+def _strip_trailing_relation_or_operator(text: str) -> str:
+    stripped = text.strip()
+    stripped = re.sub(r"\s*(?:!=|==|>=|<=|>|<|=)\s*$", "", stripped).strip()
+    stripped = re.sub(
+        r"\s+(?:is\s+)?equal\s+(?:to\s+)?(?:or\s+)?(?:greater|less)\s+than\s*$",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    ).strip()
+    stripped = re.sub(rf"\s+(?:{SYNTACTIC_OPERATOR_PATTERN})\s*$", "", stripped, flags=re.IGNORECASE).strip()
+    stripped = re.sub(r"\s*(?:is|are|be|shall\s+be|should\s+be|must\s+be)\s+equal\s+to\s*$", "", stripped, flags=re.IGNORECASE).strip()
+    stripped = re.sub(r"\s*(?:is|are|be|shall\s+be|should\s+be|must\s+be)\s+not\s*$", "", stripped, flags=re.IGNORECASE).strip()
+    stripped = re.sub(rf"\s*(?:{RELATION_PATTERN.pattern}|in)\s*$", "", stripped, flags=re.IGNORECASE).strip()
+    return stripped
 
 
 def _operator_for_right_placeholder(

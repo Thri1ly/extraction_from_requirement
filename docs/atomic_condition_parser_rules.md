@@ -118,11 +118,17 @@ Examples:
 S_SPEED > 10kph
 S_STATUS is valid
 S_STATUS is not valid
+S_STATUS != invalid
+S_STATUS = "valid"
 S_MODE is equal to "0x1: Valid"
+S_MODE is equal to "0x1: Valid" or "0x2: Invalid"
+S_MODE_1 and S_MODE_2 are equal to "0x1: Valid"
 S_K_FACTOR_REQUEST is equal to or greater than P_LIMIT
+abs(S_COLUMN_TORQUE) <= P_TORQUE_LIMIT
 S_COLUMN_TORQUE_QF invalid
 Column Torque QF (S_COLUMN_TORQUE_QF) invalid
 LDW request (S_LDW_HAPTIC_AVL) is Available
+Driver torque (S_COLUMN_TORQUE) is equal to 0
 SIGNAL1 is STATE1(SIGNAL2 == FULL)
 S_STATUS shall be Active or Degraded or fail operation
 S_STATUS is equal to valid for a period of P_DURATION_TIME
@@ -142,15 +148,40 @@ Expected outputs include:
 - `threshold_condition`
 - `parameter_threshold_condition`
 - `signal_state_condition`
+- `signal_enum_condition`
 - `condition_group`
 - `range_condition`
 - `signal_action_condition`
 
 For value-state enum text such as `S_MODE is equal to "0x1: Valid"`, the current syntactic output keeps only the state condition (`S_MODE == Valid`). The numeric enum value is treated as parsing evidence and is not emitted as a threshold child.
 
+For shared or alternative enum labels, the parser preserves the value/state pairing as
+`signal_enum_condition` instead of reducing the condition to state equality:
+
+```text
+S_MODE_1 and S_MODE_2 are equal to "0x1: Valid"
+-> AND group of signal_enum_condition children
+
+S_MODE is equal to "0x1: Valid" or "0x2: Invalid"
+-> OR group of signal_enum_condition children
+```
+
+Malformed quoted enum syntax such as `"0x1:"STATE2` is still paired by the `VALUE:STATE`
+placeholder shape when both entities are present.
+
 If NER did not split enum text, the syntactic parser can infer `VALUE` and `STATE` from `0x1: Valid`. The inferred state condition carries review metadata and `enum_value`.
 
 When a state-like right-side phrase follows a clear relation/operator but was not normalized as `STATE`, the syntactic parser may create a low-confidence inferred `STATE` with `need_review=true`, for example `FULL` in `SIGNAL2 == FULL` or `fail operation` in `STATE_1 or STATE_2 or fail operation`.
+
+Symbol operators `=`, `==`, and `!=` are accepted for signal-state predicates, including
+quoted right-side states. Left-side descriptors are preserved in `mention`, for example
+`SIGNAL control is STATE` emits mention `SIGNAL control == STATE` while keeping the
+normalized `signal` field as the canonical signal.
+
+`abs(SIGNAL) OP PARAMETER` is parsed as a parameter threshold with `transform=ABS`.
+Parenthesized alias/value predicates such as `SIGNAL_ALIAS(SIGNAL_CANON) is equal to
+VALUE` parse against the inner signal when the outer and inner signal normalize to the
+same canonical signal.
 
 When adjacent `PARAMETER` placeholders form one threshold phrase, for example `speed threshold`,
 the parser combines them into one canonical parameter name with a `P_` prefix such as
