@@ -38,6 +38,24 @@ def test_syntactic_parser_expands_single_signal_multi_state_with_shall_be():
     }
 
 
+def test_syntactic_parser_infers_missing_state_in_single_signal_multi_state_list():
+    parsed = parse_condition_line(
+        "S_STATUS shall be Active or Degraded or fail operation",
+        normalized_entities=[
+            {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+            {"mention": "Degraded", "type": "STATE", "canonical_name": "Degraded"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "OR"
+    assert parsed["need_review"] is True
+    assert [child["required_state"] for child in parsed["children"]] == ["Active", "Degraded", "fail operation"]
+    assert parsed["children"][2]["need_review"] is True
+    assert parsed["children"][2]["review_reason"] == "state inferred from syntax"
+
+
 def test_syntactic_parser_expands_multi_signal_single_state_with_shall_be():
     parsed = parse_condition_line(
         "S_SIG_1, S_SIG_2 and S_SIG_3 shall be invalid",
@@ -207,6 +225,34 @@ def test_syntactic_parser_expands_one_of_signal_members_state_condition():
     assert [child["signal"] for child in parsed["children"]] == ["S_VEHICLE_SPEED_1", "S_VEHICLE_SPEED_2"]
 
 
+def test_syntactic_parser_keeps_parenthesized_independent_signal_conditions_separate():
+    parsed = parse_condition_line(
+        "SIGNAL1 is STATE1(SIGNAL2 == FULL)",
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "STATE1", "type": "STATE", "canonical_name": "STATE1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["need_review"] is True
+    assert parsed["children"][0] == {
+        "type": "signal_state_condition",
+        "mention": "SIGNAL1 == STATE1",
+        "signal": "SIGNAL1",
+        "operator": "==",
+        "required_state": "STATE1",
+        "need_review": False,
+    }
+    assert parsed["children"][1]["type"] == "signal_state_condition"
+    assert parsed["children"][1]["signal"] == "SIGNAL2"
+    assert parsed["children"][1]["required_state"] == "FULL"
+    assert parsed["children"][1]["need_review"] is True
+    assert parsed["children"][1]["review_reason"] == "state inferred from syntax"
+
+
 def test_syntactic_parser_expands_both_signal_members_state_condition():
     parsed = parse_condition_line(
         "Both vehicle speed signal are invalid",
@@ -324,58 +370,42 @@ def test_syntactic_parser_parses_or_signal_value_state_clauses():
         '(indicate internal signal) S_REQUEST_2 is equal to "0x2: Invalid"',
         "children": [
             {
-                "type": "condition_group",
-                "logic": "AND",
-                "mention": "S_REQUEST_1 == 0x1:Valid",
-                "children": [
-                    {
-                        "type": "threshold_condition",
-                        "mention": "S_REQUEST_1 == 0x1",
-                        "signal": "S_REQUEST_1",
-                        "transform": None,
-                        "operator": "==",
-                        "value": "0x1",
-                        "unit": None,
-                        "need_review": False,
-                    },
-                    {
-                        "type": "signal_state_condition",
-                        "mention": "S_REQUEST_1 == Valid",
-                        "signal": "S_REQUEST_1",
-                        "operator": "==",
-                        "required_state": "Valid",
-                        "need_review": False,
-                    },
-                ],
+                "type": "signal_state_condition",
+                "mention": "S_REQUEST_1 == Valid",
+                "signal": "S_REQUEST_1",
+                "operator": "==",
+                "required_state": "Valid",
                 "need_review": False,
             },
             {
-                "type": "condition_group",
-                "logic": "AND",
-                "mention": "S_REQUEST_2 == 0x2:Invalid",
-                "children": [
-                    {
-                        "type": "threshold_condition",
-                        "mention": "S_REQUEST_2 == 0x2",
-                        "signal": "S_REQUEST_2",
-                        "transform": None,
-                        "operator": "==",
-                        "value": "0x2",
-                        "unit": None,
-                        "need_review": False,
-                    },
-                    {
-                        "type": "signal_state_condition",
-                        "mention": "S_REQUEST_2 == Invalid",
-                        "signal": "S_REQUEST_2",
-                        "operator": "==",
-                        "required_state": "Invalid",
-                        "need_review": False,
-                    },
-                ],
+                "type": "signal_state_condition",
+                "mention": "S_REQUEST_2 == Invalid",
+                "signal": "S_REQUEST_2",
+                "operator": "==",
+                "required_state": "Invalid",
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_value_state_clause_as_state_when_value_is_not_separate():
+    parsed = parse_condition_line(
+        'S_MODE is equal to "0x1: Valid"',
+        normalized_entities=[
+            {"mention": "S_MODE", "type": "SIGNAL", "canonical_name": "S_MODE"},
+            {"mention": "0x1: Valid", "type": "STATE", "canonical_name": "Valid"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_state_condition",
+        "mention": "S_MODE == Valid",
+        "signal": "S_MODE",
+        "operator": "==",
+        "required_state": "Valid",
         "parser": "syntactic",
         "need_review": False,
     }
@@ -673,6 +703,28 @@ def test_syntactic_parser_parses_component_state_condition():
     }
 
 
+def test_syntactic_parser_preserves_component_state_modifier():
+    parsed = parse_condition_line(
+        "EPS Initialization is completely finished",
+        normalized_entities=[
+            {"mention": "EPS Initialization", "type": "COMPONENT", "canonical_name": "EPS_INITIALIZATION"},
+            {"mention": "finished", "type": "STATE", "canonical_name": "finished"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "component_state_condition",
+        "mention": "EPS Initialization == completely finished",
+        "component": "EPS_INITIALIZATION",
+        "operator": "==",
+        "required_state": "finished",
+        "state_phrase": "completely finished",
+        "state_modifier": "completely",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
 def test_syntactic_parser_expands_quantified_component_members_state_condition():
     parsed = parse_condition_line(
         "one of the steering channels is Active",
@@ -808,3 +860,117 @@ def test_syntactic_parser_falls_back_to_legacy_threshold_parser():
     assert parsed["signal"] == "S_SPEED"
     assert parsed["operator"] == ">"
     assert parsed["value"] == 10
+
+
+def test_syntactic_parser_parses_feature_state_condition():
+    parsed = parse_condition_line(
+        "ADS torque control is Active",
+        normalized_entities=[
+            {"mention": "ADS torque control", "type": "FEATURE", "canonical_name": "F_ADS_TORQUE_CONTROL"},
+            {"mention": "Active", "type": "STATE", "canonical_name": "Active"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "feature_state_condition",
+        "mention": "ADS torque control == Active",
+        "feature": "F_ADS_TORQUE_CONTROL",
+        "operator": "==",
+        "required_state": "Active",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_feature_action_condition():
+    parsed = parse_condition_line(
+        "ADS torque control exits",
+        normalized_entities=[
+            {"mention": "ADS torque control", "type": "FEATURE", "canonical_name": "F_ADS_TORQUE_CONTROL"},
+            {"mention": "exits", "type": "ACTION", "canonical_name": "exit"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "feature_action_condition",
+        "mention": "ADS torque control -> exit",
+        "feature": "F_ADS_TORQUE_CONTROL",
+        "action": "exit",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_cleans_unbalanced_entity_parenthesis_before_placeholderizing():
+    parsed = parse_condition_line(
+        "vehicle speed is valid",
+        normalized_entities=[
+            {"mention": "(vehicle speed", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "valid)", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+
+    assert parsed["type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_VEHICLE_SPEED"
+    assert parsed["required_state"] == "valid"
+
+
+def test_syntactic_parser_splits_value_state_enum_when_entities_are_missing():
+    parsed = parse_condition_line(
+        'S_MODE is equal to "0x1: Valid"',
+        normalized_entities=[
+            {"mention": "S_MODE", "type": "SIGNAL", "canonical_name": "S_MODE"},
+        ],
+    )
+
+    assert parsed["type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_MODE"
+    assert parsed["required_state"] == "Valid"
+    assert parsed["need_review"] is True
+    assert parsed["review_reason"] == "state inferred from enum label"
+    assert parsed["enum_value"] == "0x1"
+
+
+def test_syntactic_parser_parses_parenthesized_signal_trend_condition():
+    parsed = parse_condition_line(
+        "request torque (actual torque) increases",
+        normalized_entities=[
+            {"mention": "request torque", "type": "SIGNAL", "canonical_name": "S_REQUEST_TORQUE"},
+            {"mention": "actual torque", "type": "SIGNAL", "canonical_name": "S_ACTUAL_TORQUE"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "signal_trend_condition",
+        "mention": "actual torque increases",
+        "signal": "S_ACTUAL_TORQUE",
+        "trend": "increase",
+        "context_signal": "S_REQUEST_TORQUE",
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_returns_review_fallback_for_complete_sentence_without_entities():
+    parsed = parse_condition_line("Both steer torque request send valid value", normalized_entities=[])
+
+    assert parsed["type"] == "syntactic_fallback_condition"
+    assert parsed["mention"] == "Both steer torque request send valid value"
+    assert parsed["quantifier"] == "ALL"
+    assert parsed["predicate"] == "send"
+    assert parsed["need_review"] is True
+    assert parsed["unknown_candidates"]
+
+
+def test_syntactic_parser_returns_review_fallback_for_partial_entity_sentence():
+    parsed = parse_condition_line(
+        "SIGNAL is less than the threshold",
+        normalized_entities=[
+            {"mention": "SIGNAL", "type": "SIGNAL", "canonical_name": "SIGNAL"},
+        ],
+    )
+
+    assert parsed["type"] == "syntactic_fallback_condition"
+    assert parsed["predicate"] == "<"
+    assert parsed["known_entities"][0]["canonical_name"] == "SIGNAL"
+    assert "threshold" in parsed["unknown_candidates"]

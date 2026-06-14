@@ -73,23 +73,21 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
     assert "# Batch Atomic Condition Debug Report" in report
     assert "- Total condition lines: 3" in report
     assert "- Parsed without review: 1" in report
-    assert "- Parsed with review: 1" in report
-    assert "- Unparsed: 1" in report
-    assert "- Average overall confidence: 0.50" in report
+    assert "- Parsed with review: 2" in report
+    assert "- Unparsed:" not in report
+    assert "- Average overall confidence: 0.52" in report
     assert "REQ_REVIEW" in report
     assert "state_definition_condition" in report
 
     parsed_without_review_md = tmp_path / "debug_report.parsed_without_review.md"
     parsed_with_review_md = tmp_path / "debug_report.parsed_with_review.md"
-    unparsed_md = tmp_path / "debug_report.unparsed.md"
 
     assert parsed_without_review_md.exists()
     assert parsed_with_review_md.exists()
-    assert unparsed_md.exists()
+    assert not (tmp_path / "debug_report.unparsed.md").exists()
 
     pass_report = parsed_without_review_md.read_text(encoding="utf-8")
     review_report = parsed_with_review_md.read_text(encoding="utf-8")
-    fail_report = unparsed_md.read_text(encoding="utf-8")
 
     assert "# Parsed Without Review" in pass_report
     assert "REQ_PASS" in pass_report
@@ -106,12 +104,9 @@ def test_run_batch_debug_atomic_conditions_writes_jsonl_and_markdown_summary(tmp
     assert "Syntax Analysis" not in review_report
     assert "S_COLUMN_TORQUE" in review_report
 
-    assert "# Unparsed" in fail_report
-    assert "REQ_FAIL" in fail_report
-    assert "Input Entities" not in fail_report
-    assert "Normalized Entities" not in fail_report
-    assert "Syntax Analysis" not in fail_report
-    assert "unsupported condition" in fail_report
+    assert "REQ_FAIL" in review_report
+    assert "syntactic_fallback_condition" in review_report
+    assert "unsupported condition" in review_report
 
 
 def test_batch_debug_atomic_conditions_cli(tmp_path):

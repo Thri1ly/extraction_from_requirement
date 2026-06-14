@@ -2,6 +2,7 @@ from src.parser.condition_block_extractor import extract_condition_blocks
 from src.parser.condition_logic_parser import parse_condition_logic
 from src.parser.condition_parser import parse_conditions
 from src.parser.atomic_condition_parser import parse_atomic_conditions, parse_condition_line
+from src.parser.syntactic_atomic_condition_parser import parse_condition_line as parse_syntactic_condition_line
 
 
 def by_type(items, condition_type):
@@ -9,7 +10,7 @@ def by_type(items, condition_type):
 
 
 def test_parse_signal_state_condition_from_normalized_entities():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         'S_COLUMN_TORQUE_QF is equal to "FULL"',
         normalized_entities=[
             {
@@ -36,18 +37,16 @@ def test_parse_signal_state_condition_from_normalized_entities():
         ],
     )
 
-    assert parsed == {
-        "type": "signal_state_condition",
-        "mention": 'S_COLUMN_TORQUE_QF is equal to "FULL"',
-        "signal": "S_COLUMN_TORQUE_QF",
-        "operator": "==",
-        "required_state": "FULL",
-        "need_review": False,
-    }
+    assert parsed["parser"] == "syntactic"
+    assert parsed["type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE_QF"
+    assert parsed["operator"] == "=="
+    assert parsed["required_state"] == "FULL"
+    assert parsed["need_review"] is False
 
 
 def test_parse_signal_is_state_condition_without_explicit_operator():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "Column Torque validity signal is invalid",
         normalized_entities=[
             {
@@ -67,18 +66,16 @@ def test_parse_signal_is_state_condition_without_explicit_operator():
         ],
     )
 
-    assert parsed == {
-        "type": "signal_state_condition",
-        "mention": "Column Torque validity signal is invalid",
-        "signal": "S_COLUMN_TORQUE_QF",
-        "operator": "==",
-        "required_state": "invalid",
-        "need_review": False,
-    }
+    assert parsed["parser"] == "syntactic"
+    assert parsed["type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE_QF"
+    assert parsed["operator"] == "=="
+    assert parsed["required_state"] == "invalid"
+    assert parsed["need_review"] is False
 
 
 def test_parse_single_signal_multi_state_or_condition():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "EPS system state is {LIMP HOME} or {LIMP ASIDE} or {INOPERATIVE}",
         normalized_entities=[
             {
@@ -142,12 +139,13 @@ def test_parse_single_signal_multi_state_or_condition():
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
         "need_review": False,
     }
 
 
 def test_parse_multi_signal_single_state_and_condition():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "S_SIG_1, S_SIG_2, S_SIG_3 and S_SIG_4 are invalid",
         normalized_entities=[
             {
@@ -226,12 +224,13 @@ def test_parse_multi_signal_single_state_and_condition():
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
         "need_review": False,
     }
 
 
 def test_parse_multi_signal_shared_zero_value_condition():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "{Column Torque} and {Column Velocity} are equal to zero",
         normalized_entities=[
             {
@@ -291,6 +290,7 @@ def test_parse_multi_signal_shared_zero_value_condition():
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
         "need_review": False,
     }
 
@@ -550,7 +550,7 @@ def test_parse_multi_signal_value_state_label_condition_with_or_logic():
 
 
 def test_parse_single_signal_value_state_label_condition():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         'S_DRIVER_OVERRIDE_STATUS is equal to "0x1: Override"',
         normalized_entities=[
             {
@@ -585,30 +585,13 @@ def test_parse_single_signal_value_state_label_condition():
     )
 
     assert parsed == {
-        "type": "condition_group",
-        "logic": "AND",
-        "mention": 'S_DRIVER_OVERRIDE_STATUS is equal to "0x1: Override"',
-        "children": [
-            {
-                "type": "threshold_condition",
-                "mention": "S_DRIVER_OVERRIDE_STATUS == 0x1",
-                "signal": "S_DRIVER_OVERRIDE_STATUS",
-                "transform": None,
-                "operator": "==",
-                "value": "0x1",
-                "unit": None,
-                "need_review": False,
-            },
-            {
-                "type": "signal_state_condition",
-                "mention": "S_DRIVER_OVERRIDE_STATUS == Override",
-                "signal": "S_DRIVER_OVERRIDE_STATUS",
-                "operator": "==",
-                "required_state": "Override",
-                "need_review": False,
-            },
-        ],
+        "type": "signal_state_condition",
+        "mention": "S_DRIVER_OVERRIDE_STATUS == Override",
+        "signal": "S_DRIVER_OVERRIDE_STATUS",
+        "operator": "==",
+        "required_state": "Override",
         "need_review": False,
+        "parser": "syntactic",
     }
 
 
@@ -1246,6 +1229,81 @@ def test_parse_suffix_any_parameter_threshold_condition():
     ]
 
 
+def test_parse_infix_suffix_any_parameter_threshold_condition():
+    parsed = parse_condition_line(
+        "S_ASSISTm_CAPABILITY is equal to or greater than P_ASSIST_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "S_ASSIST_CAPABILITY",
+                "type": "SIGNAL",
+                "canonical_name": "S_ASSIST_CAPABILITY",
+                "members": ["S_ASSIST_CAPABILITY_1", "S_ASSIST_CAPABILITY_2"],
+                "source": "rule",
+            },
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "OR",
+        "quantifier": "ANY_ONE",
+        "mention": "S_ASSISTm_CAPABILITY >= P_ASSIST_LIMIT",
+        "source_signal": "S_ASSIST_CAPABILITY",
+        "children": [
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_ASSIST_CAPABILITY_1 >= P_ASSIST_LIMIT",
+                "signal": "S_ASSIST_CAPABILITY_1",
+                "operator": ">=",
+                "parameter": "P_ASSIST_LIMIT",
+                "need_review": False,
+            },
+            {
+                "type": "parameter_threshold_condition",
+                "mention": "S_ASSIST_CAPABILITY_2 >= P_ASSIST_LIMIT",
+                "signal": "S_ASSIST_CAPABILITY_2",
+                "operator": ">=",
+                "parameter": "P_ASSIST_LIMIT",
+                "need_review": False,
+            },
+        ],
+        "need_review": False,
+    }
+
+
+def test_infix_suffix_quantified_signal_without_base_members_uses_quantified_source_signal():
+    parsed = parse_condition_line(
+        "S_ASSISTn_CAPABILITY is equal to or greater than P_ASSIST_LIMIT",
+        normalized_entities=[
+            {
+                "mention": "P_ASSIST_LIMIT",
+                "type": "PARAMETER",
+                "canonical_name": "P_ASSIST_LIMIT",
+                "members": [],
+                "source": "rule",
+            },
+        ],
+    )
+
+    assert parsed == {
+        "type": "condition_group",
+        "logic": "AND",
+        "quantifier": "ALL",
+        "mention": "all of S_ASSIST_CAPABILITY >= P_ASSIST_LIMIT",
+        "source_signal": "S_ASSIST_CAPABILITY",
+        "children": [],
+        "need_review": True,
+        "review_reason": "quantified suffix signal base was inferred without members",
+    }
+
+
 def test_suffix_quantified_signal_without_members_needs_review():
     parsed = parse_condition_line(
         "S_ASSIST_CAPABILITYn is equal to or greater than P_ASSIST_LIMIT",
@@ -1300,7 +1358,7 @@ def test_parse_signal_value_threshold_with_duration_qualifier():
 
 
 def test_parse_signal_state_condition_with_duration_qualifier():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "S_STATUS is equal to valid for a period of P_DURATION_TIME",
         normalized_entities=[
             {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS", "members": []},
@@ -1312,14 +1370,15 @@ def test_parse_signal_state_condition_with_duration_qualifier():
 
     assert parsed == {
         "type": "signal_state_condition",
-        "mention": "S_STATUS is equal to valid for a period of P_DURATION_TIME",
+        "mention": "S_STATUS == valid",
         "signal": "S_STATUS",
         "operator": "==",
         "required_state": "valid",
+        "need_review": False,
         "qualifiers": [
             {"type": "duration", "mention": "for a period of P_DURATION_TIME", "parameter": "P_DURATION_TIME"}
         ],
-        "need_review": False,
+        "parser": "syntactic",
     }
 
 
@@ -1375,12 +1434,13 @@ def test_signal_state_condition_does_not_accept_threshold_operator():
         ],
     )
 
-    assert parsed["type"] == "unparsed_condition"
+    assert parsed["type"] == "syntactic_fallback_condition"
+    assert parsed["predicate"] == ">="
     assert parsed["need_review"] is True
 
 
 def test_parse_bracketed_signal_state_and_parameter_threshold_condition():
-    parsed = parse_condition_line(
+    parsed = parse_syntactic_condition_line(
         "K Factor(S_SPC_K_FACTOR_REQUEST) is valid and greater than P_K_FACTOR_THERSHOLD",
         normalized_entities=[
             {
@@ -1436,6 +1496,7 @@ def test_parse_bracketed_signal_state_and_parameter_threshold_condition():
                 "need_review": False,
             },
         ],
+        "parser": "syntactic",
         "need_review": False,
     }
 

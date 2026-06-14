@@ -52,6 +52,7 @@ Debug scripts:
 Tests:
 
 - `tests/test_syntactic_atomic_condition_parser.py`
+- `tests/test_legacy_to_syntactic_migration.py`
 - `tests/test_debug_atomic_condition_line.py`
 - `tests/test_batch_debug_atomic_conditions.py`
 - `tests/test_normalize_requirements_entities.py`
@@ -59,6 +60,7 @@ Tests:
 Rule reference:
 
 - `docs/atomic_condition_parser_rules.md`
+- `docs/legacy_to_syntactic_migration.md`
 
 ## Environment
 
@@ -74,10 +76,10 @@ Run all tests:
 E:\App\Anaconda\python.exe -m pytest tests -q
 ```
 
-Latest known full test result when this file was created:
+Latest known full test result after the first legacy-to-syntactic pruning batch:
 
 ```text
-140 passed
+165 passed
 ```
 
 ## Current Parser Assumptions
@@ -92,6 +94,8 @@ Supported placeholder entity types:
 - `PARAMETER`
 - `COMPONENT`
 - `FAULT`
+- `FEATURE`
+- `ACTION`
 
 Extractor-only curly wrappers around entity mentions are non-semantic. The normalizer now strips one complete outer `{...}` wrapper from incoming entity mentions before dictionary lookup, and the syntactic parser removes standalone `{PLACEHOLDER}` wrappers from `placeholder_text`. This prevents forms such as `{S_SPEED}` or `{EPS}` from breaking exact placeholder rules. Do not strip wrappers from the full original text, and avoid changing transform-like forms such as `|{SIGNAL}|`.
 
@@ -99,7 +103,72 @@ Dictionary misses should not be dropped by default. They should pass into parsin
 
 `COMPONENT` currently only connects to `STATE`, not `VALUE` or `PARAMETER`.
 
+`COMPONENT is/are/in STATE` now tolerates relation-state modifiers such as `EPS Initialization is completely finished`. The normalized `required_state` stays as the state entity, and modifier text is preserved in `state_modifier` / `state_phrase`.
+
+Independent outer and parenthesized signal predicates are kept separate. For example, `SIGNAL1 is STATE1(SIGNAL2 == FULL)` should parse as `SIGNAL1 == STATE1` and `SIGNAL2 == FULL`, not cross-pair `SIGNAL2` with `STATE1`.
+
+Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` now emit only the signal-state condition; enum values are parsing evidence and are not emitted as threshold children.
+
+When a clear relation/operator is followed by a state-like phrase that was not normalized as `STATE`, selected syntactic rules may infer a low-confidence `STATE` with `need_review=true`, for example `FULL` after `==` or `fail operation` in a right-side state list.
+
+Single-signal predicates with duration qualifiers are syntactic now. The qualifier can attach to state, value, or parameter conditions:
+
+```text
+S_STATUS is equal to valid for a period of P_DURATION_TIME
+-> signal_state_condition + qualifiers=[duration(P_DURATION_TIME)]
+S_STATUS is zero within P_DURATION_TIME
+-> threshold_condition + qualifiers=[duration(P_DURATION_TIME, operator=<=)]
+S_SPEED > P_SPEED_LIMIT for >= P_DURATION_TIME
+-> parameter_threshold_condition + qualifiers=[duration(P_DURATION_TIME, operator=>=)]
+```
+
+Supported duration suffix families include `within PARAMETER`, `for more/longer than PARAMETER`, `exceeds/exceeding (the) duration/debounce time`, `for (a/the) duration (time) of PARAMETER`, `for (a/the) duration (time) greater/less than PARAMETER`, and `for >=/>/</<= PARAMETER`.
+
 `FAULT in COMPONENT` is supported if the `FAULT` entity reaches the parser, even when the fault was not found in the dictionary.
+
+`FEATURE` and `ACTION` are supported in the syntactic parser. Current basic outputs include:
+
+```text
+FEATURE is STATE -> feature_state_condition
+FEATURE ACTION -> feature_action_condition
+SIGNAL ACTION -> signal_action_condition
+```
+
+`SIGNAL_1(SIGNAL_2) increases/decreases` is parsed as a `signal_trend_condition`, using the inner signal as the trend target and the outer signal as context.
+
+Enum labels such as `0x1: Valid` are split at parser time if NER did not split them. The value becomes enum evidence and the state becomes an inferred `STATE` with `need_review=true`.
+
+Parser-side entity mention cleanup now strips a single unbalanced wrapper from entity mentions, for example `(vehicle speed` -> `vehicle speed` and `valid)` -> `valid`, before placeholder matching.
+
+Atomic parser public entry points should not emit `unparsed_condition`. Unknown or unsupported condition lines should return `syntactic_fallback_condition` with `need_review=true`, `predicate`, `known_entities`, and `unknown_candidates`.
+
+Legacy fallback rule `parse_suffix_quantified_signal_parameter_conditions` remains active.
+It now supports `n/m` quantifier suffixes at the end or inside a signal token. For example,
+`S_ASSIST_CAPABILITYm >= P_LIMIT` and `S_ASSISTm_CAPABILITY >= P_LIMIT` both derive base
+signal `S_ASSIST_CAPABILITY`; `m` maps to `ANY_ONE`/`OR`, and `n` maps to `ALL`/`AND`.
+If the base signal cannot be matched to members, it emits a review-needed group using
+`one of BASE_SIGNAL ...` or `all of BASE_SIGNAL ...`.
+
+## Legacy Fallback Pruning Status
+
+The full pre-pruning legacy parser file is archived at:
+
+```text
+src/parser/legacy_archive/atomic_condition_parser_legacy_full.py
+```
+
+The following legacy rules remain defined but are no longer actively called from
+`src/parser/atomic_condition_parser.py::parse_atomic_conditions` because syntactic parsing
+covers them:
+
+- `parse_signal_state_and_parameter_threshold_conditions`
+- `parse_single_signal_value_state_conditions`
+- `parse_multi_signal_value_conditions`
+- `parse_single_signal_multi_state_conditions`
+- `parse_multi_signal_single_state_conditions`
+- `parse_signal_state_conditions`
+
+The migration table is in `docs/legacy_to_syntactic_migration.md`.
 
 ## Useful Debug Checks
 
@@ -109,7 +178,7 @@ When a condition fails, inspect these first:
 2. `placeholder_text`
 3. final parsed output
 
-Batch atomic debug Markdown reports include `Placeholder Text` in the main report and category subreports (`parsed_without_review`, `parsed_with_review`, `unparsed`) when syntactic syntax analysis is available. They intentionally do not include `placeholder_map`, so the reports stay readable while still showing the sentence pattern seen by parser rules.
+Batch atomic debug Markdown reports include `Placeholder Text` in the main report and category subreports (`parsed_without_review`, `parsed_with_review`) when syntactic syntax analysis is available. They intentionally do not include `placeholder_map`, so the reports stay readable while still showing the sentence pattern seen by parser rules.
 
 If a rule should match but placeholder text does not contain the expected placeholders, the issue is usually entity extraction or normalization, not the atomic parser.
 

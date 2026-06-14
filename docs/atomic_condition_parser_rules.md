@@ -41,6 +41,8 @@ Supported entity types in the syntactic parser:
 - `PARAMETER`
 - `COMPONENT`
 - `FAULT`
+- `FEATURE`
+- `ACTION`
 
 Dictionary misses are allowed to enter parsing. They should carry `dictionary_match=false`, `normalization_confidence=0.4`, and `need_review=true` from the normalizer.
 
@@ -82,17 +84,23 @@ The syntactic parser applies rules in this order:
 1. `FAULT in COMPONENT`
 2. quantified `COMPONENT` members in `STATE`
 3. single `COMPONENT is/are/in STATE`
-4. `SIGNAL_ALIAS (SIGNAL_EXPLICIT) is STATE`
-5. explicit parenthesized signal definition, for example `alias is zero (S_X is equal to zero)`
-6. bracketed range, for example `0 < S_SPEED < 100` and `P_MAX >= S_SPEED > 0`
-7. signal value-state clause groups, for example `S_X is equal to "0x1: Valid"`
-8. quantified `SIGNAL` members in `STATE`
-9. parenthesized `SIGNAL` state without predicate, for example `alias (S_X) invalid`
-10. single `SIGNAL STATE` without predicate
-11. single signal with multiple right-side states/values/parameters
-12. multiple signals with one right-side state/value/parameter
-13. single signal with one right-side state/value/parameter
-14. legacy parser fallback
+4. single `FEATURE is/are/in STATE`
+5. single `FEATURE ACTION`
+6. single `SIGNAL ACTION`
+7. `SIGNAL_ALIAS (SIGNAL_EXPLICIT) is STATE`
+8. explicit parenthesized signal definition, for example `alias is zero (S_X is equal to zero)`
+9. independent outer and parenthesized signal predicates, for example `SIGNAL1 is STATE1(SIGNAL2 == FULL)`
+10. parenthesized signal trend, for example `SIGNAL_1(SIGNAL_2) increases`
+11. bracketed range, for example `0 < S_SPEED < 100` and `P_MAX >= S_SPEED > 0`
+12. signal value-state clause groups, for example `S_X is equal to "0x1: Valid"`
+13. quantified `SIGNAL` members in `STATE`
+14. parenthesized `SIGNAL` state without predicate, for example `alias (S_X) invalid`
+15. single `SIGNAL STATE` without predicate
+16. single signal-state predicate with duration qualifier, for example `S_STATUS is valid for a period of P_TIME`
+17. single signal with multiple right-side states/values/parameters
+18. multiple signals with one right-side state/value/parameter
+19. single signal with one right-side state/value/parameter
+20. legacy parser fallback
 
 This order matters. More specific and safer rules should stay before broader rules.
 
@@ -111,6 +119,12 @@ S_K_FACTOR_REQUEST is equal to or greater than P_LIMIT
 S_COLUMN_TORQUE_QF invalid
 Column Torque QF (S_COLUMN_TORQUE_QF) invalid
 LDW request (S_LDW_HAPTIC_AVL) is Available
+SIGNAL1 is STATE1(SIGNAL2 == FULL)
+S_STATUS shall be Active or Degraded or fail operation
+S_STATUS is equal to valid for a period of P_DURATION_TIME
+S_STATUS is zero within P_DURATION_TIME
+S_SPEED > P_SPEED_LIMIT for >= P_DURATION_TIME
+SIGNAL_1(SIGNAL_2) increases
 ```
 
 Expected outputs include:
@@ -119,6 +133,45 @@ Expected outputs include:
 - `parameter_threshold_condition`
 - `signal_state_condition`
 - `condition_group`
+
+For value-state enum text such as `S_MODE is equal to "0x1: Valid"`, the current syntactic output keeps only the state condition (`S_MODE == Valid`). The numeric enum value is treated as parsing evidence and is not emitted as a threshold child.
+
+If NER did not split enum text, the syntactic parser can infer `VALUE` and `STATE` from `0x1: Valid`. The inferred state condition carries review metadata and `enum_value`.
+
+When a state-like right-side phrase follows a clear relation/operator but was not normalized as `STATE`, the syntactic parser may create a low-confidence inferred `STATE` with `need_review=true`, for example `FULL` in `SIGNAL2 == FULL` or `fail operation` in `STATE_1 or STATE_2 or fail operation`.
+
+For single-signal predicates with a duration phrase, the syntactic parser can attach duration qualifiers to `signal_state_condition`, `threshold_condition`, and `parameter_threshold_condition`.
+
+Supported duration suffix examples:
+
+```text
+SIGNAL is STATE for a period of PARAMETER
+SIGNAL is VALUE within PARAMETER
+SIGNAL > PARAMETER for >= PARAMETER
+SIGNAL is STATE for more than PARAMETER
+SIGNAL is STATE for longer than PARAMETER
+SIGNAL is STATE exceeds the duration time
+SIGNAL is STATE exceeding debounce time
+SIGNAL is STATE for a duration of PARAMETER
+SIGNAL is STATE for the duration time of PARAMETER
+SIGNAL is STATE for a duration greater than PARAMETER
+SIGNAL is STATE for the duration time less than PARAMETER
+SIGNAL is STATE for > PARAMETER
+SIGNAL is STATE for < PARAMETER
+SIGNAL is STATE for <= PARAMETER
+```
+
+The output keeps the base condition type and adds:
+
+```json
+{
+  "qualifiers": [
+    {"type": "duration", "mention": "within P_DURATION_TIME", "parameter": "P_DURATION_TIME", "operator": "<="}
+  ]
+}
+```
+
+Duration operators are included when the suffix states one explicitly or implies one (`within` -> `<=`, `more/longer than` and `exceeds/exceeding` -> `>`). The duration parameter is not emitted as a separate threshold/parameter child.
 
 ### Range Conditions
 
@@ -163,14 +216,35 @@ Supported forms:
 EPS is Degraded
 EPS is in Degraded
 EPS are Active
+EPS Initialization is completely finished
 ```
 
 Only `COMPONENT` to `STATE` is supported. `COMPONENT` to `VALUE` or `PARAMETER` is intentionally not parsed.
+
+If a modifier appears between the relation and state, it is preserved as `state_modifier` and `state_phrase` so the output does not lose information, while `required_state` remains the normalized state.
 
 Output type:
 
 ```text
 component_state_condition
+```
+
+### Feature And Action Conditions
+
+Supported forms:
+
+```text
+ADS torque control is Active
+ADS torque control exits
+steering torque enable signal requests to exit from COMPONENT1
+```
+
+Expected output types:
+
+```text
+feature_state_condition
+feature_action_condition
+signal_action_condition
 ```
 
 ### Quantified Component Members
@@ -212,6 +286,7 @@ Current conventions:
 - `SIGNAL_ALIAS (SIGNAL_EXPLICIT) is STATE`: around `0.93`
 - Parenthesized signal state without predicate: around `0.90`
 - Bare `SIGNAL STATE`: around `0.80`
+- Syntax-inferred right-side states: around `0.70`
 - Unknown dictionary entities lower normalization confidence, usually to `0.40`
 
 `need_review=true` is used when:
@@ -220,7 +295,61 @@ Current conventions:
 - A range bound cannot be parsed cleanly.
 - A parenthesized signal canonical differs from the leading signal canonical.
 - Normalization preserved an entity that was not found in the dictionary.
-- The condition is ultimately `unparsed_condition`.
+- A right-side state phrase was inferred from syntax because no `STATE` entity was available.
+- A condition is parsed only by the generic syntactic fallback.
+
+The parser should no longer emit `unparsed_condition` from the atomic parser public entry points. If no explicit rule matches, it returns:
+
+```json
+{
+  "type": "syntactic_fallback_condition",
+  "need_review": true,
+  "predicate": "unknown_relation",
+  "unknown_candidates": []
+}
+```
+
+This fallback preserves candidates for ontology construction instead of dropping the condition.
+
+## Legacy Fallback Pruning
+
+The first migration batch removed active legacy fallback calls for rules that are now covered by syntactic parsing:
+
+- `parse_signal_state_and_parameter_threshold_conditions`
+- `parse_single_signal_value_state_conditions`
+- `parse_multi_signal_value_conditions`
+- `parse_single_signal_multi_state_conditions`
+- `parse_multi_signal_single_state_conditions`
+- `parse_signal_state_conditions`
+
+The old implementations remain in `src/parser/atomic_condition_parser.py` for reference, and the full pre-pruning file is archived at `src/parser/legacy_archive/atomic_condition_parser_legacy_full.py`.
+
+Detailed migration status is tracked in `docs/legacy_to_syntactic_migration.md`.
+
+### Active Legacy Suffix Quantifier Rule
+
+`parse_suffix_quantified_signal_parameter_conditions` remains active in legacy fallback.
+It supports signal quantifier suffixes `n` and `m` for parameter comparisons:
+
+- `n` means `ALL` / `AND`
+- `m` means `ANY_ONE` / `OR`
+
+The suffix can appear at the end or inside the signal token. The parser removes the
+quantifier character to derive the base signal and then uses that base signal's `members`
+when available.
+
+Examples:
+
+```text
+S_ASSIST_CAPABILITYn >= P_ASSIST_LIMIT
+S_ASSIST_CAPABILITYm >= P_ASSIST_LIMIT
+S_ASSISTn_CAPABILITY >= P_ASSIST_LIMIT
+S_ASSISTm_CAPABILITY >= P_ASSIST_LIMIT
+```
+
+If the inferred base signal is not present or has no members, the parser returns a
+review-needed `condition_group` using `all of BASE_SIGNAL ...` or `one of BASE_SIGNAL ...`
+as the group mention instead of silently dropping the condition.
 
 ## Debug Workflow
 
@@ -237,6 +366,11 @@ E:\App\Anaconda\python.exe scripts\batch_debug_atomic_conditions.py --input data
 ```
 
 When syntactic syntax analysis is available, the main batch Markdown report and its category subreports show `Placeholder Text` for each row. They do not show `placeholder_map`; inspect JSONL output or the single-line debug script if map-level span/entity details are needed.
+
+Batch subreports are limited to:
+
+- `parsed_without_review`
+- `parsed_with_review`
 
 Validation:
 

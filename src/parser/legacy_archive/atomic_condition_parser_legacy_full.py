@@ -57,8 +57,14 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
     conditions.extend(parse_quantified_signal_member_state_conditions(text, normalized_entities))
     conditions.extend(parse_fault_state_conditions(text))
     conditions.extend(parse_signal_comparison_conditions(text, normalized_entities))
+    conditions.extend(parse_signal_state_and_parameter_threshold_conditions(text, normalized_entities))
+    conditions.extend(parse_single_signal_value_state_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_value_conditions(text, normalized_entities))
     conditions.extend(parse_multi_signal_value_state_conditions(text, normalized_entities))
+    conditions.extend(parse_multi_signal_value_conditions(text, normalized_entities))
+    conditions.extend(parse_single_signal_multi_state_conditions(text, normalized_entities))
+    conditions.extend(parse_multi_signal_single_state_conditions(text, normalized_entities))
+    conditions.extend(parse_signal_state_conditions(text, normalized_entities))
     conditions.extend(parse_suffix_quantified_signal_parameter_conditions(text, normalized_entities))
     conditions.extend(parse_single_signal_parameter_conditions(text, normalized_entities))
     conditions.extend(parse_threshold_conditions(text))
@@ -71,70 +77,7 @@ def parse_condition_line(text: str, normalized_entities: List[JsonDict] | None =
     parsed = parse_atomic_conditions(text, normalized_entities)
     if parsed:
         return parsed[0]
-    return _fallback_condition(text, normalized_entities or [])
-
-
-def _fallback_condition(text: str, normalized_entities: List[JsonDict]) -> JsonDict:
-    condition = {
-        "type": "syntactic_fallback_condition",
-        "mention": text,
-        "predicate": _fallback_predicate(text),
-        "unknown_candidates": _fallback_unknown_candidates(text, normalized_entities),
-        "known_entities": [
-            {key: entity[key] for key in ("mention", "type", "canonical_name") if key in entity}
-            for entity in normalized_entities
-        ],
-        "parser": "syntactic_fallback",
-        "need_review": True,
-        "review_reason": "condition parsed by syntactic fallback",
-        "confidence": {"overall": 0.25, "structure": 0.45, "normalization": 0.25},
-    }
-    quantifier = _fallback_quantifier(text)
-    if quantifier:
-        condition["quantifier"] = quantifier
-    return condition
-
-
-def _fallback_quantifier(text: str) -> str | None:
-    if re.search(r"\b(?:both|all)\b", text, flags=re.IGNORECASE):
-        return "ALL"
-    if re.search(r"\b(?:one|any)\b", text, flags=re.IGNORECASE):
-        return "ANY_ONE"
-    return None
-
-
-def _fallback_predicate(text: str) -> str:
-    operator = _operator_from_text(text)
-    if operator:
-        return operator
-    for pattern, predicate in (
-        (r"\brequests?\s+to\s+exit\b", "request_exit"),
-        (r"\bexits?\b", "exit"),
-        (r"\bsends?\b", "send"),
-        (r"\bis\s+set\b", "set"),
-        (r"\bincreases?\b", "increase"),
-        (r"\bdecreases?\b", "decrease"),
-    ):
-        if re.search(pattern, text, flags=re.IGNORECASE):
-            return predicate
-    return "unknown_relation"
-
-
-def _fallback_unknown_candidates(text: str, normalized_entities: List[JsonDict]) -> List[str]:
-    candidate_text = text
-    for entity in normalized_entities:
-        for field_name in ("mention", "canonical_name"):
-            value = str(entity.get(field_name, "")).strip().strip("()[]{}")
-            if value:
-                candidate_text = re.sub(rf"(?<!\w){re.escape(value)}(?!\w)", " ", candidate_text, flags=re.IGNORECASE)
-    candidate_text = re.sub(
-        r"\b(?:both|all|one|any|the|a|an|is|are|be|to|from|than|less|greater|equal|valid|invalid|send|sends|request|requests|exit|exits|set)\b",
-        " ",
-        candidate_text,
-        flags=re.IGNORECASE,
-    )
-    candidates = [item.strip(" ,.;:()[]{}\"'") for item in re.split(r"\s{2,}|,|;", candidate_text) if item.strip(" ,.;:()[]{}\"'")]
-    return candidates or ([text.strip()] if text.strip() else [])
+    return {"type": "unparsed_condition", "mention": text, "need_review": True}
 
 
 def _parse_threshold_fragment(fragment: str) -> JsonDict | None:
@@ -760,20 +703,6 @@ def parse_suffix_quantified_signal_parameter_conditions(
         parameter_mention = _display_entity_mention(text, parameters[0])
         members = [str(member) for member in base_signal.get("members", []) if str(member).strip()]
         if not members:
-            if base_signal.get("_suffix_base_inferred"):
-                quantified_prefix = "all of" if quantifier == "ALL" else "one of"
-                return [
-                    {
-                        "type": "condition_group",
-                        "logic": logic,
-                        "quantifier": quantifier,
-                        "mention": f"{quantified_prefix} {source_signal} {operator} {parameter_mention}",
-                        "source_signal": source_signal,
-                        "children": [],
-                        "need_review": True,
-                        "review_reason": "quantified suffix signal base was inferred without members",
-                    }
-                ]
             return [
                 {
                     "type": "condition_group",
@@ -1244,30 +1173,6 @@ def _suffix_quantified_signal_matches(
                 break
             if matches and matches[-1][0] is signal:
                 break
-    if matches:
-        return matches
-
-    signals_by_name = {
-        str(signal.get(field_name, "")).strip().lower(): signal
-        for signal in signals
-        for field_name in ("canonical_name", "mention")
-        if str(signal.get(field_name, "")).strip()
-    }
-    for match in re.finditer(r"(?<!\w)(?P<suffix_signal>S_[A-Z0-9_]*(?P<suffix>[nm])[A-Z0-9_]*)(?!\w)", text):
-        suffix_signal = match.group("suffix_signal")
-        suffix_index = match.start("suffix") - match.start("suffix_signal")
-        base_name = f"{suffix_signal[:suffix_index]}{suffix_signal[suffix_index + 1:]}"
-        base_signal = signals_by_name.get(base_name.lower())
-        if not base_signal:
-            base_signal = {
-                "mention": base_name,
-                "type": "SIGNAL",
-                "canonical_name": base_name,
-                "members": [],
-                "_suffix_base_inferred": True,
-            }
-        matches.append((base_signal, suffix_signal, match.group("suffix")))
-        break
     return matches
 
 

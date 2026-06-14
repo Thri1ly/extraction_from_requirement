@@ -12,7 +12,7 @@ from src.parser.atomic_condition_parser import (
 from src.schemas import JsonDict, number_value
 
 
-SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT"}
+SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT", "FEATURE", "ACTION"}
 RELATION_PATTERN = re.compile(
     r"\b(?:is|are|be|shall\s+be|should\s+be|must\s+be|become|becomes|remain|remains)\b",
     flags=re.IGNORECASE,
@@ -36,10 +36,14 @@ def parse_atomic_conditions(text: str, normalized_entities: List[JsonDict] | Non
 def parse_condition_line(text: str, normalized_entities: List[JsonDict] | None = None) -> JsonDict:
     """Parse one condition line with syntactic relation extraction and legacy fallback."""
 
-    parsed = parse_syntactic_atomic_conditions(text, normalized_entities or [])
+    normalized_entities = normalized_entities or []
+    parsed = parse_syntactic_atomic_conditions(text, normalized_entities)
     if parsed:
         return parsed[0]
-    return legacy_parse_condition_line(text, normalized_entities)
+    legacy = legacy_parse_condition_line(text, normalized_entities)
+    if legacy.get("type") in {"unparsed_condition", "syntactic_fallback_condition"}:
+        return build_syntactic_fallback_condition(text, normalized_entities)
+    return legacy
 
 
 def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonDict]) -> List[JsonDict]:
@@ -48,25 +52,34 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     if not normalized_entities:
         return []
 
+    normalized_entities = _augment_entities_with_enum_value_state(text, normalized_entities)
     analysis = build_syntax_analysis(text, normalized_entities)
     placeholder_text = str(analysis["placeholder_text"])
     placeholder_map = analysis["placeholder_map"]
     signals = _placeholders_by_type(placeholder_map, "SIGNAL")
     components = _placeholders_by_type(placeholder_map, "COMPONENT")
     faults = _placeholders_by_type(placeholder_map, "FAULT")
+    features = _placeholders_by_type(placeholder_map, "FEATURE")
+    actions = _placeholders_by_type(placeholder_map, "ACTION")
     right_entities = _right_relation_entities(placeholder_map)
 
     conditions: List[JsonDict] = []
     conditions.extend(_parse_fault_in_component_condition(text, placeholder_text, faults, components, placeholder_map))
     conditions.extend(_parse_quantified_component_member_state(text, placeholder_text, components, right_entities, placeholder_map))
     conditions.extend(_parse_component_state_condition(text, placeholder_text, components, right_entities, placeholder_map))
+    conditions.extend(_parse_feature_state_condition(text, placeholder_text, features, right_entities, placeholder_map))
+    conditions.extend(_parse_feature_action_condition(text, placeholder_text, features, actions, placeholder_map))
+    conditions.extend(_parse_signal_action_condition(text, placeholder_text, signals, actions, components, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_parenthesized_independent_signal_conditions(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_parenthesized_signal_trend_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_bracketed_range_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_signal_value_state_clause_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_quantified_signal_member_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_without_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_state_without_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_single_signal_right_duration_qualifier(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_multi_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_multi_signal_single_right(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_single_signal_single_right(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -191,17 +204,111 @@ def _parse_component_state_condition(
         return []
 
     component_placeholder = components[0]
-    if not _has_component_state_relation_between(placeholder_text, component_placeholder, state_placeholder):
+    state_modifier = _component_state_modifier_between(placeholder_text, component_placeholder, state_placeholder)
+    if state_modifier is None:
         return []
 
     condition = _condition_for_component_state(
         original_text,
         placeholder_map[component_placeholder]["entity"],
         placeholder_map[state_placeholder]["entity"],
+        state_modifier=state_modifier,
     )
     if not condition:
         return []
     condition["parser"] = "syntactic"
+    return [condition]
+
+
+def _parse_feature_state_condition(
+    original_text: str,
+    placeholder_text: str,
+    features: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(features) != 1 or len(right_entities) != 1:
+        return []
+
+    state_placeholder = right_entities[0]
+    if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
+        return []
+    feature_placeholder = features[0]
+    if not _has_relation_or_operator_between(placeholder_text, feature_placeholder, state_placeholder):
+        return []
+
+    feature = placeholder_map[feature_placeholder]["entity"]
+    state = placeholder_map[state_placeholder]["entity"]
+    operator = _operator_for_right_placeholder(placeholder_text, feature_placeholder, [state_placeholder], state_placeholder)
+    return [
+        {
+            "type": "feature_state_condition",
+            "mention": f"{_display_entity_mention(original_text, feature)} {operator} {state.get('canonical_name') or state.get('mention')}",
+            "feature": str(feature.get("canonical_name") or feature.get("mention")),
+            "operator": operator,
+            "required_state": str(state.get("canonical_name") or state.get("mention")),
+            "parser": "syntactic",
+            "need_review": False,
+        }
+    ]
+
+
+def _parse_feature_action_condition(
+    original_text: str,
+    placeholder_text: str,
+    features: List[str],
+    actions: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(features) != 1 or len(actions) != 1:
+        return []
+    feature_placeholder = features[0]
+    action_placeholder = actions[0]
+    if placeholder_text.find(action_placeholder) <= placeholder_text.find(feature_placeholder):
+        return []
+
+    feature = placeholder_map[feature_placeholder]["entity"]
+    action = placeholder_map[action_placeholder]["entity"]
+    return [
+        {
+            "type": "feature_action_condition",
+            "mention": f"{_display_entity_mention(original_text, feature)} -> {action.get('canonical_name') or action.get('mention')}",
+            "feature": str(feature.get("canonical_name") or feature.get("mention")),
+            "action": str(action.get("canonical_name") or action.get("mention")),
+            "parser": "syntactic",
+            "need_review": False,
+        }
+    ]
+
+
+def _parse_signal_action_condition(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    actions: List[str],
+    components: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 1 or len(actions) != 1:
+        return []
+    signal_placeholder = signals[0]
+    action_placeholder = actions[0]
+    if placeholder_text.find(action_placeholder) <= placeholder_text.find(signal_placeholder):
+        return []
+
+    signal = placeholder_map[signal_placeholder]["entity"]
+    action = placeholder_map[action_placeholder]["entity"]
+    condition: JsonDict = {
+        "type": "signal_action_condition",
+        "mention": f"{_display_entity_mention(original_text, signal)} -> {action.get('canonical_name') or action.get('mention')}",
+        "signal": str(signal.get("canonical_name") or signal.get("mention")),
+        "action": str(action.get("canonical_name") or action.get("mention")),
+        "parser": "syntactic",
+        "need_review": False,
+    }
+    if len(components) == 1:
+        component = placeholder_map[components[0]]["entity"]
+        condition["component"] = str(component.get("canonical_name") or component.get("mention"))
     return [condition]
 
 
@@ -257,6 +364,7 @@ def _parse_parenthesized_signal_state_with_predicate(
 def build_syntax_analysis(text: str, normalized_entities: List[JsonDict]) -> JsonDict:
     """Replace known entities with placeholders and attach optional local spaCy syntax info."""
 
+    normalized_entities = _augment_entities_with_enum_value_state(text, normalized_entities)
     placeholder_text, placeholder_map = _placeholderize_entities(text, normalized_entities)
     return {
         "placeholder_text": placeholder_text,
@@ -318,6 +426,79 @@ def _parse_explicit_parenthesized_condition(
         return [condition]
 
     return []
+
+
+def _parse_parenthesized_independent_signal_conditions(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    """Parse separate outer and parenthesized signal predicates without cross-pairing."""
+
+    if len(signals) < 2:
+        return []
+
+    for match in re.finditer(r"\((?P<body>[^()]*)\)", placeholder_text):
+        outer_text = placeholder_text[: match.start()]
+        body = match.group("body")
+        outer_condition = _signal_condition_from_segment(original_text, outer_text, signals, right_entities, placeholder_map)
+        body_condition = _signal_condition_from_segment(original_text, body, signals, right_entities, placeholder_map)
+        if not outer_condition or not body_condition:
+            continue
+        if outer_condition.get("signal") == body_condition.get("signal"):
+            continue
+
+        need_review = bool(outer_condition.get("need_review") or body_condition.get("need_review"))
+        result: JsonDict = {
+            "type": "condition_group",
+            "logic": "AND",
+            "mention": original_text,
+            "children": [outer_condition, body_condition],
+            "parser": "syntactic",
+            "need_review": need_review,
+        }
+        if need_review:
+            result["review_reason"] = "one or more states inferred from syntax"
+        return [result]
+
+    return []
+
+
+def _parse_parenthesized_signal_trend_condition(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 2:
+        return []
+
+    match = re.search(
+        r"\b(?P<outer>SIGNAL_\d+)\s*\(\s*(?P<inner>SIGNAL_\d+)\s*\)\s+"
+        r"(?P<trend>increases?|decreases?|rises?|falls?)\b",
+        placeholder_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+
+    trend = match.group("trend").lower()
+    trend_value = "decrease" if trend.startswith(("decreas", "fall")) else "increase"
+    inner = placeholder_map[match.group("inner")]["entity"]
+    outer = placeholder_map[match.group("outer")]["entity"]
+    return [
+        {
+            "type": "signal_trend_condition",
+            "mention": f"{_display_entity_mention(original_text, inner)} {match.group('trend')}",
+            "signal": str(inner.get("canonical_name") or inner.get("mention")),
+            "trend": trend_value,
+            "context_signal": str(outer.get("canonical_name") or outer.get("mention")),
+            "parser": "syntactic",
+            "need_review": False,
+        }
+    ]
 
 
 def _parse_bracketed_range_condition(
@@ -496,26 +677,12 @@ def _value_state_clause_group(
     placeholder_map: JsonDict,
 ) -> JsonDict | None:
     signal = placeholder_map[clause["signal"]]["entity"]
-    value = placeholder_map[clause["value"]]["entity"]
     state = placeholder_map[clause["state"]]["entity"]
     operator = _operator_for_right_placeholder(placeholder_text, clause["signal"], [clause["value"]], clause["value"])
-    value_condition = _condition_for_right_entity(original_text, signal, value, operator=operator)
     state_condition = _condition_for_right_entity(original_text, signal, state, operator=operator)
-    if not value_condition or not state_condition:
+    if not state_condition:
         return None
-
-    signal_mention = _display_entity_mention(original_text, signal)
-    parsed_value = _value_from_entity(value)
-    if parsed_value is None:
-        return None
-    state_name = str(state.get("canonical_name") or state.get("mention"))
-    return {
-        "type": "condition_group",
-        "logic": "AND",
-        "mention": f"{signal_mention} {operator} {parsed_value['value']}:{state_name}",
-        "children": [value_condition, state_condition],
-        "need_review": False,
-    }
+    return state_condition
 
 
 def _parse_quantified_signal_member_right(
@@ -675,6 +842,47 @@ def _parse_single_signal_state_without_predicate(
     return [condition]
 
 
+def _parse_single_signal_right_duration_qualifier(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 1:
+        return []
+
+    duration = _duration_qualifier_from_placeholder_text(original_text, placeholder_text, placeholder_map)
+    if not duration:
+        return []
+
+    duration_placeholder = str(duration["placeholder"])
+    comparison_rights = [right for right in right_entities if right != duration_placeholder]
+    if len(comparison_rights) != 1:
+        return []
+    signal_placeholder = signals[0]
+    right_placeholder = comparison_rights[0]
+    if not _has_relation_or_operator_between(placeholder_text, signal_placeholder, right_placeholder):
+        return []
+
+    duration_start = placeholder_text.find(duration_placeholder)
+    right_end = placeholder_text.find(right_placeholder) + len(right_placeholder)
+    if duration_start <= right_end:
+        return []
+
+    condition = _condition_for_right_entity(
+        original_text,
+        placeholder_map[signal_placeholder]["entity"],
+        placeholder_map[right_placeholder]["entity"],
+        operator=_operator_for_right_placeholder(placeholder_text, signal_placeholder, [right_placeholder], right_placeholder),
+    )
+    if not condition:
+        return []
+    condition["qualifiers"] = [duration["qualifier"]]
+    condition["parser"] = "syntactic"
+    return [condition]
+
+
 def _parse_single_signal_multi_right(
     original_text: str,
     placeholder_text: str,
@@ -703,19 +911,32 @@ def _parse_single_signal_multi_right(
         )
         for right in ordered_rights
     ]
+    inferred_states = _inferred_state_items_after_right_list(placeholder_text, ordered_rights)
+    first_operator = _operator_for_right_placeholder(placeholder_text, signals[0], ordered_rights, ordered_rights[0])
+    children.extend(
+        _condition_for_right_entity(
+            original_text,
+            signal,
+            _synthetic_state_entity(state_text),
+            operator=first_operator,
+        )
+        for state_text in inferred_states
+    )
     if any(child is None for child in children):
         return []
+    need_review = any(bool(child.get("need_review")) for child in children)
 
-    return [
-        {
-            "type": "condition_group",
-            "logic": logic,
-            "mention": original_text,
-            "children": children,
-            "parser": "syntactic",
-            "need_review": False,
-        }
-    ]
+    result: JsonDict = {
+        "type": "condition_group",
+        "logic": logic,
+        "mention": original_text,
+        "children": children,
+        "parser": "syntactic",
+        "need_review": need_review,
+    }
+    if need_review:
+        result["review_reason"] = "one or more states inferred from syntax"
+    return [result]
 
 
 def _parse_multi_signal_single_right(
@@ -778,6 +999,49 @@ def _parse_single_signal_single_right(
     return [condition]
 
 
+def _signal_condition_from_segment(
+    original_text: str,
+    segment_text: str,
+    signals: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    segment_signals = [signal for signal in signals if signal in segment_text]
+    if len(segment_signals) != 1:
+        return None
+
+    signal_placeholder = segment_signals[0]
+    segment_rights = [right for right in right_entities if right in segment_text]
+    if len(segment_rights) > 1:
+        return None
+
+    if len(segment_rights) == 1:
+        right_placeholder = segment_rights[0]
+        if not _has_relation_or_operator_between(segment_text, signal_placeholder, right_placeholder):
+            return None
+        condition = _condition_for_right_entity(
+            original_text,
+            placeholder_map[signal_placeholder]["entity"],
+            placeholder_map[right_placeholder]["entity"],
+            operator=_operator_for_right_placeholder(segment_text, signal_placeholder, [right_placeholder], right_placeholder),
+        )
+        return condition
+
+    inferred = _inferred_state_after_signal(segment_text, signal_placeholder)
+    if not inferred:
+        return None
+    state_entity = _synthetic_state_entity(inferred["state"])
+    condition = _condition_for_right_entity(
+        original_text,
+        placeholder_map[signal_placeholder]["entity"],
+        state_entity,
+        operator=str(inferred["operator"]),
+    )
+    if not condition:
+        return None
+    return condition
+
+
 def _condition_for_right_entity(
     original_text: str,
     signal: JsonDict,
@@ -790,14 +1054,21 @@ def _condition_for_right_entity(
 
     if right_type == "STATE":
         required_state = str(right_entity.get("canonical_name") or right_entity.get("mention"))
-        return {
+        inferred_from_syntax = bool(right_entity.get("inferred_from_syntax") or right_entity.get("inferred_from_enum"))
+        condition: JsonDict = {
             "type": "signal_state_condition",
             "mention": f"{signal_mention} {operator} {required_state}",
             "signal": signal_name,
             "operator": operator,
             "required_state": required_state,
-            "need_review": False,
+            "need_review": inferred_from_syntax,
         }
+        if inferred_from_syntax:
+            condition["review_reason"] = str(right_entity.get("review_reason") or "state inferred from syntax")
+            condition["confidence"] = {"overall": 0.7, "structure": 0.8, "normalization": 0.4}
+        if right_entity.get("enum_value"):
+            condition["enum_value"] = str(right_entity["enum_value"])
+        return condition
 
     if right_type == "PARAMETER":
         parameter_name = str(right_entity.get("canonical_name") or right_entity.get("mention"))
@@ -832,6 +1103,7 @@ def _condition_for_component_state(
     original_text: str,
     component: JsonDict,
     state: JsonDict,
+    state_modifier: str = "",
 ) -> JsonDict | None:
     if str(state.get("type", "")).upper() != "STATE":
         return None
@@ -839,19 +1111,25 @@ def _condition_for_component_state(
     component_name = str(component.get("canonical_name") or component.get("mention"))
     component_mention = _display_entity_mention(original_text, component)
     required_state = str(state.get("canonical_name") or state.get("mention"))
-    return {
+    state_phrase = f"{state_modifier} {required_state}".strip()
+    condition: JsonDict = {
         "type": "component_state_condition",
-        "mention": f"{component_mention} == {required_state}",
+        "mention": f"{component_mention} == {state_phrase}",
         "component": component_name,
         "operator": "==",
         "required_state": required_state,
         "need_review": False,
     }
+    if state_modifier:
+        condition["state_phrase"] = state_phrase
+        condition["state_modifier"] = state_modifier
+    return condition
 
 
 def _placeholderize_entities(text: str, entities: List[JsonDict]) -> tuple[str, JsonDict]:
     spans = []
     for entity in entities:
+        entity = _clean_entity_for_parsing(entity)
         entity_type = str(entity.get("type", "")).upper()
         if entity_type not in SUPPORTED_ENTITY_TYPES:
             continue
@@ -888,6 +1166,62 @@ def _remove_entity_wrapper_braces_from_placeholders(text: str) -> str:
         r"\g<placeholder>",
         text,
     )
+
+
+def _clean_entity_for_parsing(entity: JsonDict) -> JsonDict:
+    cleaned = dict(entity)
+    for field_name in ("mention", "canonical_name"):
+        if field_name in cleaned:
+            cleaned[field_name] = _clean_unbalanced_entity_wrapper(str(cleaned[field_name]))
+    return cleaned
+
+
+def _clean_unbalanced_entity_wrapper(text: str) -> str:
+    cleaned = text.strip()
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    for left, right in pairs.items():
+        if cleaned.startswith(left) and not cleaned.endswith(right):
+            cleaned = cleaned[1:].strip()
+        if cleaned.endswith(right) and not cleaned.startswith(left):
+            cleaned = cleaned[:-1].strip()
+    return cleaned
+
+
+def _augment_entities_with_enum_value_state(text: str, entities: List[JsonDict]) -> List[JsonDict]:
+    augmented = [dict(entity) for entity in entities]
+    existing_spans = {
+        (str(entity.get("mention", "")).strip().lower(), str(entity.get("type", "")).upper())
+        for entity in augmented
+    }
+    for match in re.finditer(r"\b(?P<value>0x[0-9a-f]+)\s*:\s*(?P<state>[A-Za-z][A-Za-z0-9_ /-]*)", text, flags=re.IGNORECASE):
+        value = match.group("value")
+        state = match.group("state").strip().strip("\"'")
+        state = re.split(r"[\")\];,]", state, maxsplit=1)[0].strip()
+        if (value.lower(), "VALUE") not in existing_spans:
+            augmented.append(
+                {
+                    "mention": value,
+                    "type": "VALUE",
+                    "canonical_name": value,
+                    "inferred_from_enum": True,
+                    "need_review": True,
+                }
+            )
+            existing_spans.add((value.lower(), "VALUE"))
+        if state and (state.lower(), "STATE") not in existing_spans:
+            augmented.append(
+                {
+                    "mention": state,
+                    "type": "STATE",
+                    "canonical_name": state,
+                    "inferred_from_enum": True,
+                    "need_review": True,
+                    "review_reason": "state inferred from enum label",
+                    "enum_value": value,
+                }
+            )
+            existing_spans.add((state.lower(), "STATE"))
+    return augmented
 
 
 def _right_relation_entities(placeholder_map: JsonDict) -> List[str]:
@@ -945,6 +1279,24 @@ def _placeholder_list_logic(text: str, placeholders: List[str]) -> str | None:
     return None
 
 
+def _inferred_state_items_after_right_list(text: str, ordered_rights: List[str]) -> List[str]:
+    if len(ordered_rights) < 2:
+        return []
+    inferred: List[str] = []
+    last_right = ordered_rights[-1]
+    cursor = text.find(last_right) + len(last_right)
+    tail = text[cursor:]
+    for match in re.finditer(r"\b(?:or|and/or|and)\b|,", tail, flags=re.IGNORECASE):
+        candidate = tail[match.end() :].strip()
+        if not candidate:
+            continue
+        candidate = re.split(r"\b(?:or|and/or|and)\b|,", candidate, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        candidate = _clean_inferred_state_text(candidate)
+        if _is_safe_inferred_state_text(candidate):
+            inferred.append(candidate)
+    return inferred
+
+
 def _clause_group_logic(text: str, clauses: List[JsonDict]) -> str | None:
     if len(clauses) < 2:
         return None
@@ -978,15 +1330,33 @@ def _has_relation_between(text: str, left_placeholder: str, right_placeholder: s
 
 
 def _has_component_state_relation_between(text: str, component_placeholder: str, state_placeholder: str) -> bool:
+    return _component_state_modifier_between(text, component_placeholder, state_placeholder) is not None
+
+
+def _component_state_modifier_between(text: str, component_placeholder: str, state_placeholder: str) -> str | None:
     component_end = text.find(component_placeholder) + len(component_placeholder)
     state_start = text.find(state_placeholder)
     if state_start <= component_end:
-        return False
+        return None
     separator = text[component_end:state_start]
-    return bool(
-        re.search(rf"{RELATION_PATTERN.pattern}(?:\s+in)?\s*$", separator, flags=re.IGNORECASE)
-        or re.search(r"\bin\s*$", separator, flags=re.IGNORECASE)
+    match = re.search(
+        rf"^\s*(?:{RELATION_PATTERN.pattern}|in)\b(?P<tail>.*?)$",
+        separator,
+        flags=re.IGNORECASE,
     )
+    if not match:
+        return None
+    tail = re.sub(r"^\s*in\b", "", match.group("tail"), flags=re.IGNORECASE).strip()
+    return tail
+
+
+def _has_relation_or_operator_between(text: str, left_placeholder: str, right_placeholder: str) -> bool:
+    left_end = text.find(left_placeholder) + len(left_placeholder)
+    right_start = text.find(right_placeholder)
+    if right_start <= left_end:
+        return False
+    separator = text[left_end:right_start]
+    return bool(RELATION_PATTERN.search(separator) or _operator_from_text(separator) or re.search(r"\bin\s*$", separator, flags=re.IGNORECASE))
 
 
 def _operator_for_right_placeholder(
@@ -1033,6 +1403,242 @@ def _operator_from_text(text: str) -> str | None:
         if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, flags=re.IGNORECASE):
             return OPERATOR_ALIASES[alias]
     return None
+
+
+def _inferred_state_after_signal(text: str, signal_placeholder: str) -> JsonDict | None:
+    signal_end = text.find(signal_placeholder) + len(signal_placeholder)
+    if signal_end < len(signal_placeholder):
+        return None
+    tail = text[signal_end:]
+    match = _state_relation_tail_match(tail)
+    if not match:
+        return None
+    operator_text = match.group("operator")
+    state_text = _clean_inferred_state_text(match.group("state"))
+    operator = _operator_from_text(operator_text) or "=="
+    if state_text.lower().startswith("not "):
+        operator = "!="
+        state_text = state_text[4:].strip()
+    state_text = _strip_leading_operator_words(state_text)
+    if not _is_safe_inferred_state_text(state_text):
+        return None
+    return {"state": state_text, "operator": operator}
+
+
+def _state_relation_tail_match(text: str) -> re.Match[str] | None:
+    operator_aliases = [
+        "not equal to",
+        "not equals",
+        "not equal",
+        "equal to",
+        "equals",
+        "==",
+        "!=",
+        "=",
+    ]
+    operator_pattern = "|".join(re.escape(alias) for alias in operator_aliases)
+    return re.search(
+        rf"^\s*(?P<operator>{operator_pattern}|{RELATION_PATTERN.pattern}|in)\s+(?P<state>.+?)\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _clean_inferred_state_text(text: str) -> str:
+    cleaned = text.strip().strip("\"'")
+    cleaned = re.split(r"\s*(?:\)|;)\s*$", cleaned)[0].strip()
+    return cleaned
+
+
+def _strip_leading_operator_words(text: str) -> str:
+    cleaned = text.strip()
+    for pattern in (
+        r"^(?:equal\s+to|equals?)\s+",
+        r"^(?:be|in)\s+",
+    ):
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
+
+
+def _is_safe_inferred_state_text(text: str) -> bool:
+    if not text or re.search(r"\b(?:and|or|and/or)\b", text, flags=re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:\s*[A-Za-z/%]+)?", text):
+        return False
+    if re.fullmatch(r"P_[A-Z0-9_]+", text, flags=re.IGNORECASE):
+        return False
+    return bool(re.search(r"[A-Za-z]", text))
+
+
+def _synthetic_state_entity(state_text: str) -> JsonDict:
+    return {
+        "mention": state_text,
+        "type": "STATE",
+        "canonical_name": state_text,
+        "dictionary_match": False,
+        "normalization_confidence": 0.4,
+        "inferred_from_syntax": True,
+        "need_review": True,
+        "review_reason": "state inferred from syntax",
+    }
+
+
+def _duration_qualifier_from_placeholder_text(
+    original_text: str,
+    placeholder_text: str,
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    for parameter_placeholder in _placeholders_by_type(placeholder_map, "PARAMETER"):
+        operator = _duration_operator_from_text(placeholder_text, parameter_placeholder)
+        if operator is None and not _has_duration_phrase_without_operator(placeholder_text, parameter_placeholder):
+            continue
+        qualifier = _duration_qualifier_from_text(
+            original_text,
+            placeholder_map[parameter_placeholder]["entity"],
+        )
+        if not qualifier:
+            continue
+        return {"placeholder": parameter_placeholder, "qualifier": qualifier}
+    return None
+
+
+def _duration_qualifier_from_text(text: str, parameter: JsonDict) -> JsonDict | None:
+    parameter_name = str(parameter.get("canonical_name") or parameter.get("mention"))
+    for field_name in ("mention", "canonical_name"):
+        value = str(parameter.get(field_name, "")).strip()
+        if not value:
+            continue
+        for pattern, operator in _duration_qualifier_patterns(re.escape(value)):
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            qualifier: JsonDict = {
+                "type": "duration",
+                "mention": match.group(0),
+                "parameter": parameter_name,
+            }
+            if operator:
+                qualifier["operator"] = operator
+            return qualifier
+    return None
+
+
+def _duration_operator_from_text(text: str, parameter_pattern: str) -> str | None:
+    for pattern, operator in _duration_qualifier_patterns(re.escape(parameter_pattern)):
+        if operator and re.search(pattern, text, flags=re.IGNORECASE):
+            return operator
+    return None
+
+
+def _has_duration_phrase_without_operator(text: str, parameter_pattern: str) -> bool:
+    return any(
+        operator is None and re.search(pattern, text, flags=re.IGNORECASE)
+        for pattern, operator in _duration_qualifier_patterns(re.escape(parameter_pattern))
+    )
+
+
+def _duration_qualifier_patterns(parameter_pattern: str) -> List[tuple[str, str | None]]:
+    return [
+        (rf"\bwithin\s+{parameter_pattern}\b", "<="),
+        (rf"\bfor\s+(?:more|longer)\s+than\s+{parameter_pattern}\b", ">"),
+        (rf"\bexceeds?\s+(?:the\s+)?{parameter_pattern}\b", ">"),
+        (rf"\bexceeding\s+(?:the\s+)?{parameter_pattern}\b", ">"),
+        (rf"\bfor\s+(?:a|the)?\s*period\s+of\s+{parameter_pattern}\b", None),
+        (rf"\bfor\s+(?:a|the)?\s*duration(?:\s+time)?\s+of\s+{parameter_pattern}\b", None),
+        (rf"\bfor\s+(?:a|the)?\s*duration(?:\s+time)?\s+greater\s+than\s+{parameter_pattern}\b", ">"),
+        (rf"\bfor\s+(?:a|the)?\s*duration(?:\s+time)?\s+less\s+than\s+{parameter_pattern}\b", "<"),
+        (rf"\bfor\s+>=\s*{parameter_pattern}\b", ">="),
+        (rf"\bfor\s+>\s*{parameter_pattern}\b", ">"),
+        (rf"\bfor\s+<=\s*{parameter_pattern}\b", "<="),
+        (rf"\bfor\s+<\s*{parameter_pattern}\b", "<"),
+    ]
+
+
+def build_syntactic_fallback_condition(text: str, normalized_entities: List[JsonDict] | None = None) -> JsonDict:
+    """Return a reviewable fallback condition instead of dropping an unparsable sentence."""
+
+    normalized_entities = normalized_entities or []
+    analysis = build_syntax_analysis(text, normalized_entities)
+    placeholder_text = str(analysis["placeholder_text"])
+    known_entities = [_fallback_known_entity(entity) for entity in normalized_entities]
+    condition: JsonDict = {
+        "type": "syntactic_fallback_condition",
+        "mention": text,
+        "predicate": _fallback_predicate(text),
+        "unknown_candidates": _fallback_unknown_candidates(text, normalized_entities),
+        "known_entities": known_entities,
+        "parser": "syntactic_fallback",
+        "need_review": True,
+        "review_reason": "condition parsed by syntactic fallback",
+        "confidence": {"overall": 0.25, "structure": 0.45, "normalization": 0.25},
+    }
+    quantifier = _fallback_quantifier(text)
+    if quantifier:
+        condition["quantifier"] = quantifier
+    if placeholder_text and placeholder_text != text:
+        condition["placeholder_text"] = placeholder_text
+    return condition
+
+
+def _fallback_known_entity(entity: JsonDict) -> JsonDict:
+    return {
+        key: entity[key]
+        for key in ("mention", "type", "canonical_name")
+        if key in entity
+    }
+
+
+def _fallback_quantifier(text: str) -> str | None:
+    if re.search(r"\b(?:both|all)\b", text, flags=re.IGNORECASE):
+        return "ALL"
+    if re.search(r"\b(?:one|any)\b", text, flags=re.IGNORECASE):
+        return "ANY_ONE"
+    return None
+
+
+def _fallback_predicate(text: str) -> str:
+    operator = _operator_from_text(text)
+    if operator:
+        return operator
+    predicate_patterns = [
+        (r"\brequests?\s+to\s+exit\b", "request_exit"),
+        (r"\bexits?\b", "exit"),
+        (r"\bsends?\b", "send"),
+        (r"\bis\s+set\b", "set"),
+        (r"\bincreases?\b", "increase"),
+        (r"\bdecreases?\b", "decrease"),
+        (r"\benables?\b", "enable"),
+        (r"\bdisables?\b", "disable"),
+    ]
+    for pattern, predicate in predicate_patterns:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return predicate
+    return "unknown_relation"
+
+
+def _fallback_unknown_candidates(text: str, normalized_entities: List[JsonDict]) -> List[str]:
+    candidate_text = text
+    for entity in normalized_entities:
+        for field_name in ("mention", "canonical_name"):
+            value = _clean_unbalanced_entity_wrapper(str(entity.get(field_name, "")).strip())
+            if value:
+                candidate_text = re.sub(rf"(?<!\w){re.escape(value)}(?!\w)", " ", candidate_text, flags=re.IGNORECASE)
+
+    candidate_text = re.sub(
+        r"\b(?:both|all|one|any|the|a|an|is|are|be|to|from|than|less|greater|equal|valid|invalid|state\d*)\b",
+        " ",
+        candidate_text,
+        flags=re.IGNORECASE,
+    )
+    candidate_text = re.sub(r"\b(?:send|sends|request|requests|exit|exits|set|increases?|decreases?)\b", " ", candidate_text, flags=re.IGNORECASE)
+    candidates = [
+        item.strip(" ,.;:()[]{}\"'")
+        for item in re.split(r"\s{2,}|,|;|\band\b|\bor\b", candidate_text, flags=re.IGNORECASE)
+        if item.strip(" ,.;:()[]{}\"'")
+    ]
+    if candidates:
+        return candidates
+    return [text.strip()] if text.strip() else []
 
 
 def _entity_spans(text: str, entity: JsonDict) -> List[tuple[int, int, int]]:

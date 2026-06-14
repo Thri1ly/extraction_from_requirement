@@ -55,7 +55,6 @@ def build_markdown_report(results: Sequence[JsonDict]) -> str:
     md.append(f"- Total condition lines: {metrics['total']}\n")
     md.append(f"- Parsed without review: {metrics['parsed_without_review']}\n")
     md.append(f"- Parsed with review: {metrics['parsed_with_review']}\n")
-    md.append(f"- Unparsed: {metrics['unparsed']}\n")
     md.append(f"- Average overall confidence: {metrics['average_overall_confidence']:.2f}\n\n")
 
     md.append("## Details\n\n")
@@ -74,12 +73,11 @@ def build_markdown_report(results: Sequence[JsonDict]) -> str:
 
 
 def write_category_reports(output_md: Path, results: Sequence[JsonDict]) -> None:
-    """Write parsed/review/unparsed detail reports next to the main report."""
+    """Write with-review and without-review detail reports next to the main report."""
 
     categories = {
         "parsed_without_review": ("Parsed Without Review", _is_parsed_without_review),
         "parsed_with_review": ("Parsed With Review", _is_parsed_with_review),
-        "unparsed": ("Unparsed", _is_unparsed),
     }
     for suffix, (title, predicate) in categories.items():
         category_path = output_md.with_name(f"{output_md.stem}.{suffix}{output_md.suffix}")
@@ -119,9 +117,7 @@ def summarize_results(results: Sequence[JsonDict]) -> JsonDict:
         parsed = result.get("parsed", {})
         parsed_type = parsed.get("type")
         need_review = bool(parsed.get("need_review"))
-        if parsed_type == "unparsed_condition":
-            unparsed += 1
-        elif need_review:
+        if need_review:
             parsed_with_review += 1
         else:
             parsed_without_review += 1
@@ -143,12 +139,12 @@ def _is_unparsed(result: JsonDict) -> bool:
 
 def _is_parsed_with_review(result: JsonDict) -> bool:
     parsed = result.get("parsed", {})
-    return parsed.get("type") != "unparsed_condition" and bool(parsed.get("need_review"))
+    return bool(parsed.get("need_review"))
 
 
 def _is_parsed_without_review(result: JsonDict) -> bool:
     parsed = result.get("parsed", {})
-    return parsed.get("type") != "unparsed_condition" and not bool(parsed.get("need_review"))
+    return not bool(parsed.get("need_review"))
 
 
 def _condition_line_from_row(row: JsonDict) -> str:
