@@ -253,6 +253,88 @@ def test_syntactic_parser_keeps_parenthesized_independent_signal_conditions_sepa
     assert parsed["children"][1]["review_reason"] == "state inferred from syntax"
 
 
+def test_syntactic_parser_keeps_detected_event_with_parenthesized_signal_comparison_duration():
+    parsed = parse_condition_line(
+        "a xxx is detected in ECU1 (SIGNAL1 < SIGNAL2 for a xxx period of at least P_TIME)",
+        normalized_entities=[
+            {"mention": "xxx", "type": "FAULT", "canonical_name": "xxx"},
+            {"mention": "ECU1", "type": "COMPONENT", "canonical_name": "ECU1"},
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "P_TIME", "type": "PARAMETER", "canonical_name": "P_TIME"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert parsed["need_review"] is False
+    outer = parsed["children"][0]
+    assert outer["type"] == "nlp_condition"
+    assert outer["mention"] == "a xxx is detected in ECU1"
+    assert outer["predicate"] == "detect"
+    assert outer["voice"] == "passive"
+    assert outer["subject"] == "xxx"
+    assert outer["locations"] == [{"relation": "in", "text": "ECU1", "entity_type": "COMPONENT", "canonical_name": "ECU1"}]
+    assert outer["semantic_chunks"] == [
+        {"role": "determiner", "text": "a"},
+        {"role": "subject", "text": "xxx", "entity_type": "FAULT", "canonical_name": "xxx"},
+        {"role": "predicate", "text": "is detected", "lemma": "detect", "voice": "passive"},
+        {"role": "location", "relation": "in", "text": "ECU1", "entity_type": "COMPONENT", "canonical_name": "ECU1"},
+    ]
+    inner = parsed["children"][1]
+    assert inner == {
+        "type": "signal_comparison_condition",
+        "mention": "SIGNAL1 < SIGNAL2",
+        "left_signal": "SIGNAL1",
+        "operator": "<",
+        "right_signal": "SIGNAL2",
+        "qualifiers": [
+            {
+                "type": "duration",
+                "mention": "for a xxx period of at least P_TIME",
+                "parameter": "P_TIME",
+                "operator": ">=",
+            }
+        ],
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_preserves_incomplete_nlp_fragment_as_itself():
+    parsed = parse_condition_line(
+        "in ECU1",
+        normalized_entities=[
+            {"mention": "ECU1", "type": "COMPONENT", "canonical_name": "ECU1"},
+        ],
+    )
+
+    assert parsed["type"] == "nlp_condition"
+    assert parsed["mention"] == "in ECU1"
+    assert parsed["text"] == "in ECU1"
+    assert parsed["predicate"] == "unknown_relation"
+    assert parsed["semantic_chunks"] == [
+        {"role": "raw_text", "text": "in ECU1"},
+    ]
+    assert parsed["known_entities"] == [{"mention": "ECU1", "type": "COMPONENT", "canonical_name": "ECU1"}]
+    assert parsed["need_review"] is True
+    assert parsed["review_reason"] == "incomplete natural-language condition"
+
+
+def test_syntactic_parser_keeps_signal_alias_parentheses_out_of_nlp_segment_composer():
+    parsed = parse_condition_line(
+        "Driver torque (S_COLUMN_TORQUE) invalid",
+        normalized_entities=[
+            {"mention": "Driver torque", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "invalid"},
+        ],
+    )
+
+    assert parsed["type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["required_state"] == "invalid"
+
+
 def test_syntactic_parser_expands_both_signal_members_state_condition():
     parsed = parse_condition_line(
         "Both vehicle speed signal are invalid",
@@ -951,15 +1033,16 @@ def test_syntactic_parser_parses_parenthesized_signal_trend_condition():
     }
 
 
-def test_syntactic_parser_returns_review_fallback_for_complete_sentence_without_entities():
+def test_syntactic_parser_returns_nlp_condition_for_complete_sentence_without_entities():
     parsed = parse_condition_line("Both steer torque request send valid value", normalized_entities=[])
 
-    assert parsed["type"] == "syntactic_fallback_condition"
+    assert parsed["type"] == "nlp_condition"
     assert parsed["mention"] == "Both steer torque request send valid value"
     assert parsed["quantifier"] == "ALL"
     assert parsed["predicate"] == "send"
     assert parsed["need_review"] is True
-    assert parsed["unknown_candidates"]
+    assert parsed["semantic_chunks"] == [{"role": "raw_text", "text": "Both steer torque request send valid value"}]
+    assert parsed["review_reason"] == "natural-language condition parsed by nlp fallback"
 
 
 def test_syntactic_parser_returns_review_fallback_for_partial_entity_sentence():

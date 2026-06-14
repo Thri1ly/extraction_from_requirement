@@ -87,20 +87,21 @@ The syntactic parser applies rules in this order:
 4. single `FEATURE is/are/in STATE`
 5. single `FEATURE ACTION`
 6. single `SIGNAL ACTION`
-7. `SIGNAL_ALIAS (SIGNAL_EXPLICIT) is STATE`
-8. explicit parenthesized signal definition, for example `alias is zero (S_X is equal to zero)`
-9. independent outer and parenthesized signal predicates, for example `SIGNAL1 is STATE1(SIGNAL2 == FULL)`
-10. parenthesized signal trend, for example `SIGNAL_1(SIGNAL_2) increases`
-11. bracketed range, for example `0 < S_SPEED < 100` and `P_MAX >= S_SPEED > 0`
-12. signal value-state clause groups, for example `S_X is equal to "0x1: Valid"`
-13. quantified `SIGNAL` members in `STATE`
-14. parenthesized `SIGNAL` state without predicate, for example `alias (S_X) invalid`
-15. single `SIGNAL STATE` without predicate
-16. single signal-state predicate with duration qualifier, for example `S_STATUS is valid for a period of P_TIME`
-17. single signal with multiple right-side states/values/parameters
-18. multiple signals with one right-side state/value/parameter
-19. single signal with one right-side state/value/parameter
-20. legacy parser fallback
+7. passive detected event with parenthesized signal comparison, for example `a fault is detected in ECU (S1 < S2 for ... of at least P_TIME)`
+8. `SIGNAL_ALIAS (SIGNAL_EXPLICIT) is STATE`
+9. explicit parenthesized signal definition, for example `alias is zero (S_X is equal to zero)`
+10. independent outer and parenthesized signal predicates, for example `SIGNAL1 is STATE1(SIGNAL2 == FULL)`
+11. parenthesized signal trend, for example `SIGNAL_1(SIGNAL_2) increases`
+12. bracketed range, for example `0 < S_SPEED < 100` and `P_MAX >= S_SPEED > 0`
+13. signal value-state clause groups, for example `S_X is equal to "0x1: Valid"`
+14. quantified `SIGNAL` members in `STATE`
+15. parenthesized `SIGNAL` state without predicate, for example `alias (S_X) invalid`
+16. single `SIGNAL STATE` without predicate
+17. single signal-state predicate with duration qualifier, for example `S_STATUS is valid for a period of P_TIME`
+18. single signal with multiple right-side states/values/parameters
+19. multiple signals with one right-side state/value/parameter
+20. single signal with one right-side state/value/parameter
+21. legacy parser fallback
 
 This order matters. More specific and safer rules should stay before broader rules.
 
@@ -125,6 +126,7 @@ S_STATUS is equal to valid for a period of P_DURATION_TIME
 S_STATUS is zero within P_DURATION_TIME
 S_SPEED > P_SPEED_LIMIT for >= P_DURATION_TIME
 SIGNAL_1(SIGNAL_2) increases
+a FAULT is detected in COMPONENT (SIGNAL1 < SIGNAL2 for a calibrated window of at least PARAMETER)
 ```
 
 Expected outputs include:
@@ -141,6 +143,7 @@ If NER did not split enum text, the syntactic parser can infer `VALUE` and `STAT
 When a state-like right-side phrase follows a clear relation/operator but was not normalized as `STATE`, the syntactic parser may create a low-confidence inferred `STATE` with `need_review=true`, for example `FULL` in `SIGNAL2 == FULL` or `fail operation` in `STATE_1 or STATE_2 or fail operation`.
 
 For single-signal predicates with a duration phrase, the syntactic parser can attach duration qualifiers to `signal_state_condition`, `threshold_condition`, and `parameter_threshold_condition`.
+For detected-event parenthetical signal comparisons, the syntactic parser can also attach the duration qualifier to the `signal_comparison_condition` child.
 
 Supported duration suffix examples:
 
@@ -159,6 +162,16 @@ SIGNAL is STATE for the duration time less than PARAMETER
 SIGNAL is STATE for > PARAMETER
 SIGNAL is STATE for < PARAMETER
 SIGNAL is STATE for <= PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of at least PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of no less than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of at most PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of no more than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of greater than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of more than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of longer than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of less than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of shorter than PARAMETER
+SIGNAL1 < SIGNAL2 for any descriptive phrase of PARAMETER
 ```
 
 The output keeps the base condition type and adds:
@@ -172,6 +185,55 @@ The output keeps the base condition type and adds:
 ```
 
 Duration operators are included when the suffix states one explicitly or implies one (`within` -> `<=`, `more/longer than` and `exceeds/exceeding` -> `>`). The duration parameter is not emitted as a separate threshold/parameter child.
+For generic `for ... of ... PARAMETER` forms, the words after `of` determine the operator: `at least` and `no less than` -> `>=`; `at most` and `no more than` -> `<=`; `greater than`, `more than`, and `longer than` -> `>`; `less than` and `shorter than` -> `<`. Plain `of PARAMETER` has no operator. The phrase before `of` is treated as the duration parameter's descriptive attribute phrase and is not restricted to words such as `period`, `duration`, or `debounce`.
+
+### Passive Detection Events With Parenthesized Comparisons
+
+Supported form:
+
+```text
+a xxx is detected in ECU1 (SIGNAL1 < SIGNAL2 for a xxx period of at least P_TIME)
+```
+
+Output type:
+
+```text
+condition_group
+```
+
+The group uses `logic=AND` and has two children:
+
+- `nlp_condition` for the outer natural-language event with fields such as `text`, `subject`, `predicate=detect`, `voice=passive`, `locations`, `semantic_chunks`, and `known_entities`.
+- `signal_comparison_condition` for the parenthesized formal comparison. A trailing duration phrase is attached in `qualifiers` and is not emitted as a separate parameter threshold condition.
+
+Parentheses are only decomposed this way when the parenthesized segment contains a formal
+condition expression. Alias/entity forms such as `Driver torque (S_COLUMN_TORQUE) invalid`
+stay with the existing signal-state parenthesis rules.
+
+### Natural-Language Conditions
+
+Natural-language condition segments that do not match a formal condition rule are preserved
+as `nlp_condition`. When a sentence can be segmented, semantic chunks identify roles such
+as `subject`, `predicate`, and `location`. When the text is incomplete, for example:
+
+```text
+in ECU1
+```
+
+the parser preserves the fragment itself:
+
+```json
+{
+  "type": "nlp_condition",
+  "mention": "in ECU1",
+  "text": "in ECU1",
+  "semantic_chunks": [{"role": "raw_text", "text": "in ECU1"}],
+  "need_review": true
+}
+```
+
+Unsupported formal-looking lines can still return `syntactic_fallback_condition` so they
+remain reviewable without being mislabeled as natural-language semantics.
 
 ### Range Conditions
 

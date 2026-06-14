@@ -70,6 +70,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions.extend(_parse_feature_state_condition(text, placeholder_text, features, right_entities, placeholder_map))
     conditions.extend(_parse_feature_action_condition(text, placeholder_text, features, actions, placeholder_map))
     conditions.extend(_parse_signal_action_condition(text, placeholder_text, signals, actions, components, placeholder_map))
+    conditions.extend(_parse_parenthesized_event_with_signal_comparison(text, placeholder_text, signals, components, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_independent_signal_conditions(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -359,6 +360,189 @@ def _parse_parenthesized_signal_state_with_predicate(
         condition["confidence"]["overall"] = 0.72
         condition["confidence"]["normalization"] = 0.72
     return [condition]
+
+
+def _parse_parenthesized_event_with_signal_comparison(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    components: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) < 2 or len(components) != 1:
+        return []
+
+    for match in re.finditer(r"\((?P<body>[^()]*)\)", placeholder_text):
+        outer_text = placeholder_text[: match.start()].strip()
+        body = match.group("body").strip()
+        outer_nlp_condition = _nlp_condition_from_segment(
+            original_text.split("(", 1)[0].strip(),
+            outer_text,
+            placeholder_map,
+        )
+        if not outer_nlp_condition:
+            continue
+        body_condition = _signal_comparison_condition_from_segment(original_text, body, signals, placeholder_map)
+        if not body_condition:
+            continue
+
+        need_review = bool(outer_nlp_condition.get("need_review") or body_condition.get("need_review"))
+        return [
+            {
+                "type": "condition_group",
+                "logic": "AND",
+                "mention": original_text,
+                "children": [outer_nlp_condition, body_condition],
+                "parser": "syntactic",
+                "need_review": need_review,
+            }
+        ]
+
+    return []
+
+
+def _nlp_condition_from_segment(
+    original_segment_text: str,
+    segment_text: str,
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    segment_text = segment_text.strip()
+    original_segment_text = original_segment_text.strip()
+    if not segment_text or not original_segment_text:
+        return None
+
+    detected = _detected_nlp_condition_from_segment(original_segment_text, segment_text, placeholder_map)
+    if detected:
+        return detected
+
+    return _raw_nlp_condition_from_segment(original_segment_text, segment_text, placeholder_map)
+
+
+def _detected_nlp_condition_from_segment(
+    original_segment_text: str,
+    segment_text: str,
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    entity_placeholders = [placeholder for placeholder in placeholder_map if placeholder in segment_text]
+    component_placeholders = [
+        placeholder
+        for placeholder in entity_placeholders
+        if str(placeholder_map[placeholder]["entity"].get("type", "")).upper() == "COMPONENT"
+    ]
+    subject_placeholders = [placeholder for placeholder in entity_placeholders if placeholder not in component_placeholders]
+    if len(subject_placeholders) != 1 or len(component_placeholders) != 1:
+        return None
+
+    subject_placeholder = subject_placeholders[0]
+    location_placeholder = component_placeholders[0]
+    match = re.fullmatch(
+        rf"\s*(?:(?P<determiner>a|an|the)\s+)?{re.escape(subject_placeholder)}\s+"
+        rf"(?:is|are|was|were|be|been|being)\s+detected\s+"
+        rf"(?P<location_relation>in)\s+{re.escape(location_placeholder)}\s*",
+        segment_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    subject = placeholder_map[subject_placeholder]["entity"]
+    location = placeholder_map[location_placeholder]["entity"]
+    subject_chunk = _semantic_entity_chunk("subject", original_segment_text, subject)
+    location_chunk = _semantic_entity_chunk("location", original_segment_text, location)
+    location_chunk["relation"] = match.group("location_relation").lower()
+    location_field = {key: value for key, value in location_chunk.items() if key != "role"}
+    condition: JsonDict = {
+        "type": "nlp_condition",
+        "mention": original_segment_text,
+        "text": original_segment_text,
+        "subject": str(subject.get("canonical_name") or subject.get("mention")),
+        "predicate": "detect",
+        "voice": "passive",
+        "locations": [location_field],
+        "semantic_chunks": [],
+        "known_entities": [_fallback_known_entity(subject), _fallback_known_entity(location)],
+        "syntax_source": _nlp_syntax_source(original_segment_text),
+        "parser": "syntactic",
+        "need_review": False,
+    }
+    determiner = match.group("determiner")
+    if determiner:
+        condition["semantic_chunks"].append({"role": "determiner", "text": determiner.lower()})
+    condition["semantic_chunks"].extend(
+        [
+            subject_chunk,
+            {"role": "predicate", "text": "is detected", "lemma": "detect", "voice": "passive"},
+            location_chunk,
+        ]
+    )
+    return condition
+
+
+def _raw_nlp_condition_from_segment(
+    original_segment_text: str,
+    segment_text: str,
+    placeholder_map: JsonDict,
+) -> JsonDict:
+    known_entities = [
+        _fallback_known_entity(payload["entity"])
+        for placeholder, payload in placeholder_map.items()
+        if placeholder in segment_text
+    ]
+    condition: JsonDict = {
+        "type": "nlp_condition",
+        "mention": original_segment_text,
+        "text": original_segment_text,
+        "predicate": _fallback_predicate(original_segment_text),
+        "semantic_chunks": [{"role": "raw_text", "text": original_segment_text}],
+        "known_entities": known_entities,
+        "syntax_source": _nlp_syntax_source(original_segment_text),
+        "parser": "syntactic",
+        "need_review": True,
+        "review_reason": _nlp_review_reason(original_segment_text),
+    }
+    quantifier = _fallback_quantifier(original_segment_text)
+    if quantifier:
+        condition["quantifier"] = quantifier
+    return condition
+
+
+def _signal_comparison_condition_from_segment(
+    original_text: str,
+    segment_text: str,
+    signals: List[str],
+    placeholder_map: JsonDict,
+) -> JsonDict | None:
+    segment_signals = _ordered_placeholders(segment_text, [signal for signal in signals if signal in segment_text])
+    if len(segment_signals) != 2:
+        return None
+
+    match = re.search(
+        rf"\b(?P<left>{re.escape(segment_signals[0])})\s*"
+        rf"(?P<operator>>=|<=|==|!=|>|<|=)\s*"
+        rf"(?P<right>{re.escape(segment_signals[1])})\b",
+        segment_text,
+    )
+    if not match:
+        return None
+
+    left = placeholder_map[match.group("left")]["entity"]
+    right = placeholder_map[match.group("right")]["entity"]
+    left_name = str(left.get("canonical_name") or left.get("mention"))
+    right_name = str(right.get("canonical_name") or right.get("mention"))
+    operator = _operator_from_text(match.group("operator")) or match.group("operator")
+    condition: JsonDict = {
+        "type": "signal_comparison_condition",
+        "mention": f"{_display_entity_mention(original_text, left)} {operator} {_display_entity_mention(original_text, right)}",
+        "left_signal": left_name,
+        "operator": operator,
+        "right_signal": right_name,
+        "qualifiers": [],
+        "need_review": False,
+    }
+    duration = _duration_qualifier_from_placeholder_text(original_text, segment_text, placeholder_map)
+    if duration:
+        condition["qualifiers"].append(duration["qualifier"])
+    return condition
 
 
 def build_syntax_analysis(text: str, normalized_entities: List[JsonDict]) -> JsonDict:
@@ -1543,6 +1727,13 @@ def _duration_qualifier_patterns(parameter_pattern: str) -> List[tuple[str, str 
         (rf"\bfor\s+(?:more|longer)\s+than\s+{parameter_pattern}\b", ">"),
         (rf"\bexceeds?\s+(?:the\s+)?{parameter_pattern}\b", ">"),
         (rf"\bexceeding\s+(?:the\s+)?{parameter_pattern}\b", ">"),
+        (rf"\bfor\s+[^()]*?\s+of\s+at\s+least\s+{parameter_pattern}\b", ">="),
+        (rf"\bfor\s+[^()]*?\s+of\s+no\s+less\s+than\s+{parameter_pattern}\b", ">="),
+        (rf"\bfor\s+[^()]*?\s+of\s+at\s+most\s+{parameter_pattern}\b", "<="),
+        (rf"\bfor\s+[^()]*?\s+of\s+no\s+more\s+than\s+{parameter_pattern}\b", "<="),
+        (rf"\bfor\s+[^()]*?\s+of\s+(?:greater|more|longer)\s+than\s+{parameter_pattern}\b", ">"),
+        (rf"\bfor\s+[^()]*?\s+of\s+(?:less|shorter)\s+than\s+{parameter_pattern}\b", "<"),
+        (rf"\bfor\s+[^()]*?\s+of\s+{parameter_pattern}\b", None),
         (rf"\bfor\s+(?:a|the)?\s*period\s+of\s+{parameter_pattern}\b", None),
         (rf"\bfor\s+(?:a|the)?\s*duration(?:\s+time)?\s+of\s+{parameter_pattern}\b", None),
         (rf"\bfor\s+(?:a|the)?\s*duration(?:\s+time)?\s+greater\s+than\s+{parameter_pattern}\b", ">"),
@@ -1560,6 +1751,10 @@ def build_syntactic_fallback_condition(text: str, normalized_entities: List[Json
     normalized_entities = normalized_entities or []
     analysis = build_syntax_analysis(text, normalized_entities)
     placeholder_text = str(analysis["placeholder_text"])
+    placeholder_map = analysis["placeholder_map"]
+    if _should_use_nlp_fallback(text):
+        return _raw_nlp_condition_from_segment(text, placeholder_text, placeholder_map)
+
     known_entities = [_fallback_known_entity(entity) for entity in normalized_entities]
     condition: JsonDict = {
         "type": "syntactic_fallback_condition",
@@ -1578,6 +1773,33 @@ def build_syntactic_fallback_condition(text: str, normalized_entities: List[Json
     if placeholder_text and placeholder_text != text:
         condition["placeholder_text"] = placeholder_text
     return condition
+
+
+def _should_use_nlp_fallback(text: str) -> bool:
+    if _operator_from_text(text):
+        return False
+    return bool(text.strip())
+
+
+def _nlp_review_reason(text: str) -> str:
+    if re.match(r"^\s*(?:in|on|at|from|to|within|without|with)\b", text, flags=re.IGNORECASE):
+        return "incomplete natural-language condition"
+    return "natural-language condition parsed by nlp fallback"
+
+
+def _semantic_entity_chunk(role: str, text: str, entity: JsonDict) -> JsonDict:
+    chunk: JsonDict = {
+        "role": role,
+        "text": _display_entity_mention(text, entity),
+        "entity_type": str(entity.get("type", "")).upper(),
+    }
+    if entity.get("canonical_name"):
+        chunk["canonical_name"] = str(entity["canonical_name"])
+    return chunk
+
+
+def _nlp_syntax_source(text: str) -> str:
+    return "spacy" if _spacy_tokens(text) else "placeholder"
 
 
 def _fallback_known_entity(entity: JsonDict) -> JsonDict:

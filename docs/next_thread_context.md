@@ -107,6 +107,15 @@ Dictionary misses should not be dropped by default. They should pass into parsin
 
 Independent outer and parenthesized signal predicates are kept separate. For example, `SIGNAL1 is STATE1(SIGNAL2 == FULL)` should parse as `SIGNAL1 == STATE1` and `SIGNAL2 == FULL`, not cross-pair `SIGNAL2` with `STATE1`.
 
+Passive detection events with parenthesized signal comparisons are kept as one `condition_group`
+with two children rather than collapsing into a state definition or only returning the
+parenthesized expression. For example,
+`a xxx is detected in ECU1 (SIGNAL1 < SIGNAL2 for a xxx period of at least P_TIME)`
+emits an outer `nlp_condition` (`subject=xxx`, `predicate=detect`, `voice=passive`,
+`locations=[{relation=in, text=ECU1}]`, plus `semantic_chunks`) and an inner
+`signal_comparison_condition`.
+The duration phrase is attached to the comparison as a `duration` qualifier.
+
 Value-state enum clauses such as `S_MODE is equal to "0x1: Valid"` now emit only the signal-state condition; enum values are parsing evidence and are not emitted as threshold children.
 
 When a clear relation/operator is followed by a state-like phrase that was not normalized as `STATE`, selected syntactic rules may infer a low-confidence `STATE` with `need_review=true`, for example `FULL` after `==` or `fail operation` in a right-side state list.
@@ -123,6 +132,11 @@ S_SPEED > P_SPEED_LIMIT for >= P_DURATION_TIME
 ```
 
 Supported duration suffix families include `within PARAMETER`, `for more/longer than PARAMETER`, `exceeds/exceeding (the) duration/debounce time`, `for (a/the) duration (time) of PARAMETER`, `for (a/the) duration (time) greater/less than PARAMETER`, and `for >=/>/</<= PARAMETER`.
+Generic segment-level duration syntax `for ... of ... PARAMETER` is also supported without
+hard-coding the noun before `of`. Operators are derived from the words after `of`:
+`at least` / `no less than` -> `>=`, `at most` / `no more than` -> `<=`,
+`greater than` / `more than` / `longer than` -> `>`, and `less than` / `shorter than` -> `<`.
+Plain `of PARAMETER` has no explicit operator.
 
 `FAULT in COMPONENT` is supported if the `FAULT` entity reaches the parser, even when the fault was not found in the dictionary.
 
@@ -140,7 +154,12 @@ Enum labels such as `0x1: Valid` are split at parser time if NER did not split t
 
 Parser-side entity mention cleanup now strips a single unbalanced wrapper from entity mentions, for example `(vehicle speed` -> `vehicle speed` and `valid)` -> `valid`, before placeholder matching.
 
-Atomic parser public entry points should not emit `unparsed_condition`. Unknown or unsupported condition lines should return `syntactic_fallback_condition` with `need_review=true`, `predicate`, `known_entities`, and `unknown_candidates`.
+Atomic parser public entry points should not emit `unparsed_condition`. Natural-language
+condition lines that do not match a formal parser rule should return `nlp_condition`.
+Incomplete fragments such as `in ECU1` are preserved as their own raw-text semantic chunk
+with `need_review=true`. Unsupported formal-looking condition lines should return
+`syntactic_fallback_condition` with `need_review=true`, `predicate`, `known_entities`, and
+`unknown_candidates`.
 
 Legacy fallback rule `parse_suffix_quantified_signal_parameter_conditions` remains active.
 It now supports `n/m` quantifier suffixes at the end or inside a signal token. For example,
