@@ -291,6 +291,74 @@ def extract_quantified_parenthesized_member_group(text: str) -> JsonDict | None:
     }
 
 
+def extract_parenthesized_condition_group(text: str) -> JsonDict | None:
+    parenthesis_spans = _parenthesis_spans(text)
+    if len(parenthesis_spans) != 1:
+        return None
+
+    outer_span = parenthesis_spans[0]
+    full_span = _trim_span(text, [0, len(text)])
+    if outer_span != full_span:
+        return None
+
+    inner_span = _trim_span(text, [outer_span[0] + 1, outer_span[1] - 1])
+    if inner_span[0] >= inner_span[1]:
+        return None
+
+    inner_text = text[inner_span[0] : inner_span[1]]
+    split = split_parenthesized_condition_group(inner_text)
+    if not split:
+        return None
+
+    return {
+        "chunk_type": "parenthesized_condition_group",
+        "text": inner_text,
+        "span": inner_span,
+        "source": "parenthesized_condition_group",
+        "logic": split["logic"],
+        "sub_chunks": split["sub_chunks"],
+    }
+
+
+def split_parenthesized_condition_group(parenthesis_content: str) -> JsonDict | None:
+    """Split a parenthesized condition group into atomic member chunks."""
+
+    connectors: list[tuple[re.Match[str], list[int]]] = []
+    for match in re.finditer(r"\b(AND|OR)\b", parenthesis_content, flags=re.IGNORECASE):
+        span = [match.start(), match.end()]
+        if _is_top_level_span(parenthesis_content, span):
+            connectors.append((match, span))
+
+    if not connectors:
+        return None
+
+    logic_values = [match.group(1).upper() for match, _span in connectors]
+    if not all(logic == logic_values[0] for logic in logic_values):
+        return None
+
+    sub_chunks: list[JsonDict] = []
+    cursor = 0
+    for match, _span in connectors:
+        part_span = _trim_span(parenthesis_content, [cursor, match.start()])
+        if part_span[0] >= part_span[1]:
+            return None
+        part_text = parenthesis_content[part_span[0] : part_span[1]]
+        if not looks_like_complete_condition_expression(part_text):
+            return None
+        sub_chunks.append({"chunk_type": "atomic_condition", "text": part_text})
+        cursor = match.end()
+
+    tail_span = _trim_span(parenthesis_content, [cursor, len(parenthesis_content)])
+    if tail_span[0] >= tail_span[1]:
+        return None
+    tail_text = parenthesis_content[tail_span[0] : tail_span[1]]
+    if not looks_like_complete_condition_expression(tail_text):
+        return None
+    sub_chunks.append({"chunk_type": "atomic_condition", "text": tail_text})
+
+    return {"logic": logic_values[0], "sub_chunks": sub_chunks}
+
+
 def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:
     left = text[: int(connector_span[0])]
     right = text[int(connector_span[1]) :]
@@ -319,6 +387,13 @@ def looks_like_complete_condition(text: str) -> bool:
     )
 
 
+def looks_like_complete_condition_expression(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return False
+    return bool(EXPLICIT_OPERATOR_PATTERN.search(candidate))
+
+
 def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tuple]:
     square_bracket_specs = _square_bracket_group_specs(text)
     if square_bracket_specs:
@@ -327,6 +402,10 @@ def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tu
     quantified_group_specs = _quantified_parenthesized_member_group_specs(text)
     if quantified_group_specs:
         return quantified_group_specs
+
+    parenthesized_group_specs = _parenthesized_condition_group_specs(text)
+    if parenthesized_group_specs:
+        return parenthesized_group_specs
 
     all_parenthesis_spans = _parenthesis_spans(text)
     parenthesis_duration_specs = _parenthesis_duration_chunk_specs(text, all_parenthesis_spans)
@@ -404,6 +483,18 @@ def _collect_occupied_span_specs(
 
 def _quantified_parenthesized_member_group_specs(text: str) -> List[tuple]:
     group = extract_quantified_parenthesized_member_group(text)
+    if not group:
+        return []
+    metadata = dict(group)
+    span = metadata.pop("span")
+    chunk_type = metadata.pop("chunk_type")
+    source = metadata.pop("source")
+    metadata.pop("text", None)
+    return [(span, chunk_type, source, metadata)]
+
+
+def _parenthesized_condition_group_specs(text: str) -> List[tuple]:
+    group = extract_parenthesized_condition_group(text)
     if not group:
         return []
     metadata = dict(group)
@@ -655,6 +746,7 @@ def _confidence_for_chunk_type(chunk_type: str) -> float:
         "phase_timing_constraint",
         "temporal_context_constraint",
         "quantified_parenthesized_member_group",
+        "parenthesized_condition_group",
     }:
         return 0.9
     if chunk_type == "natural_language_event":

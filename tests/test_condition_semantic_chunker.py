@@ -187,6 +187,44 @@ def test_chunk_condition_sentence_still_splits_parenthesized_explicit_condition(
     assert result["chunks"][1]["chunk_type"] == "explicit_signal_definition"
 
 
+def test_parenthesized_condition_group_symbolic_and():
+    result = chunk_condition_sentence(
+        "(S_VEHICLE_SPEED >= P_SPEED_LIMIT AND S_SPEED_QF = VALID)",
+        normalized_entities=[],
+    )
+
+    assert len(result["chunks"]) == 1
+    chunk = result["chunks"][0]
+    assert chunk["chunk_type"] == "parenthesized_condition_group"
+    assert chunk["logic"] == "AND"
+    assert len(chunk["sub_chunks"]) == 2
+    assert chunk["sub_chunks"][0]["text"] == "S_VEHICLE_SPEED >= P_SPEED_LIMIT"
+    assert chunk["sub_chunks"][1]["text"] == "S_SPEED_QF = VALID"
+
+
+def test_parenthesized_condition_group_symbolic_or():
+    result = chunk_condition_sentence(
+        "(S_A <= P_LIMIT OR S_B = INVALID)",
+        normalized_entities=[],
+    )
+
+    assert len(result["chunks"]) == 1
+    chunk = result["chunks"][0]
+    assert chunk["chunk_type"] == "parenthesized_condition_group"
+    assert chunk["logic"] == "OR"
+    assert len(chunk["sub_chunks"]) == 2
+
+
+def test_parenthesized_condition_group_does_not_break_entity_supplement():
+    result = chunk_condition_sentence(
+        "vehicle speed(S_VEHICLE_SPEED) is invalid",
+        normalized_entities=[],
+    )
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["chunk_type"] != "parenthesized_condition_group"
+
+
 def test_chunk_condition_sentence_treats_square_brackets_as_condition_group_container():
     text = (
         "angle request is out of range in normal operation"
