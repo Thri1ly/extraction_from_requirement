@@ -1,6 +1,12 @@
 import json
 
-from src.parser.condition_semantic_chunker import assign_entities_to_chunks, chunk_condition_sentence
+from src.parser.condition_semantic_chunker import (
+    assign_entities_to_chunks,
+    chunk_condition_sentence,
+    find_balanced_square_bracket_span,
+    split_bracket_group_sub_chunks,
+    split_square_bracket_condition_group,
+)
 
 
 def test_chunk_condition_sentence_splits_parenthesized_definition_and_duration():
@@ -114,6 +120,77 @@ def test_chunk_condition_sentence_still_splits_parenthesized_explicit_condition(
     assert len(result["chunks"]) == 2
     assert result["chunks"][0]["chunk_type"] == "natural_language_condition"
     assert result["chunks"][1]["chunk_type"] == "explicit_signal_definition"
+
+
+def test_chunk_condition_sentence_treats_square_brackets_as_condition_group_container():
+    text = (
+        "angle request is out of range in normal operation"
+        "[(S_SPC_ANGLE_MODE_REQUEST is equal to normal) AND "
+        "(S_SPC_ANGLE_REQUEST is greater than 'static limit')] "
+        "for a duration greater than P_LIMIT"
+    )
+    result = chunk_condition_sentence(
+        text,
+        normalized_entities=[
+            {"mention": "angle request", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "S_SPC_ANGLE_MODE_REQUEST", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_MODE_REQUEST"},
+            {"mention": "normal", "type": "STATE", "canonical_name": "normal"},
+            {"mention": "S_SPC_ANGLE_REQUEST", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "static limit", "type": "PARAMETER", "canonical_name": "static limit"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert [chunk["chunk_type"] for chunk in result["chunks"]] == [
+        "natural_language_condition",
+        "bracketed_condition_group",
+        "duration_constraint",
+    ]
+    assert [chunk["text"] for chunk in result["chunks"]] == [
+        "angle request is out of range in normal operation",
+        "(S_SPC_ANGLE_MODE_REQUEST is equal to normal) AND (S_SPC_ANGLE_REQUEST is greater than 'static limit')",
+        "for a duration greater than P_LIMIT",
+    ]
+    assert "[" not in result["chunks"][1]["text"]
+    assert "]" not in result["chunks"][1]["text"]
+
+
+def test_find_balanced_square_bracket_span_returns_outer_span_or_none():
+    text = "prefix[(S_A is equal to normal) AND (S_B is greater than 'static limit')] suffix"
+
+    assert find_balanced_square_bracket_span(text) == [6, 73]
+    assert find_balanced_square_bracket_span("prefix [missing close") is None
+    assert find_balanced_square_bracket_span("no brackets") is None
+
+
+def test_split_square_bracket_condition_group_returns_top_level_parts_without_brackets():
+    text = (
+        "angle request is out of range in normal operation"
+        "[(S_SPC_ANGLE_MODE_REQUEST is equal to normal) AND "
+        "(S_SPC_ANGLE_REQUEST is greater than 'static limit')] "
+        "for a duration greater than P_LIMIT"
+    )
+
+    parts = split_square_bracket_condition_group(text)
+
+    assert parts == {
+        "prefix": "angle request is out of range in normal operation",
+        "bracket_content": "(S_SPC_ANGLE_MODE_REQUEST is equal to normal) AND (S_SPC_ANGLE_REQUEST is greater than 'static limit')",
+        "suffix": "for a duration greater than P_LIMIT",
+        "span": [49, 153],
+    }
+
+
+def test_split_bracket_group_sub_chunks_preserves_quoted_values_and_logic():
+    content = "(S_A is equal to normal) AND (S_B is greater than 'static limit')"
+
+    assert split_bracket_group_sub_chunks(content) == {
+        "logic": "AND",
+        "sub_chunks": [
+            {"text": "S_A is equal to normal", "span": [1, 23]},
+            {"text": "S_B is greater than 'static limit'", "span": [30, 64]},
+        ],
+    }
 
 
 def test_chunk_condition_sentence_assigns_entities_to_each_matching_chunk():

@@ -7,6 +7,7 @@ from src.schemas import JsonDict
 DURATION_PATTERN = re.compile(
     r"\b(?:"
     r"for\s+a\s+duration\s+of\s+\S+|"
+    r"for\s+a\s+duration\s+greater\s+than\s+\S+|"
     r"for\s+at\s+least\s+\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|second|seconds|msec|milliseconds)?|"
     r"within\s+\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|second|seconds|msec|milliseconds)?"
     r")\b",
@@ -30,9 +31,10 @@ def chunk_condition_sentence(
     """Split a condition sentence into conservative semantic chunks."""
 
     entities = list(normalized_entities or [])
-    chunk_specs = _collect_chunk_specs(text)
+    chunk_text_source = _clean_condition_text(text)
+    chunk_specs = _collect_chunk_specs(chunk_text_source)
     chunks = [
-        _build_chunk(index, text, span, chunk_type, source)
+        _build_chunk(index, chunk_text_source, span, chunk_type, source)
         for index, (span, chunk_type, source) in enumerate(chunk_specs, start=1)
     ]
     chunks = assign_entities_to_chunks(chunks, entities)
@@ -83,7 +85,62 @@ def entities_for_span(
     return chunk_entities
 
 
+def find_balanced_square_bracket_span(text: str) -> list[int] | None:
+    """Return the outermost balanced square bracket span as [start, end]."""
+
+    start: int | None = None
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "[":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "]" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                return [start, index + 1]
+    return None
+
+
+def split_square_bracket_condition_group(text: str) -> JsonDict | None:
+    """Split one top-level square bracket group into prefix/content/suffix."""
+
+    span = find_balanced_square_bracket_span(text)
+    if span is None:
+        return None
+    start, end = span
+    return {
+        "prefix": text[:start].strip(),
+        "bracket_content": text[start + 1 : end - 1].strip(),
+        "suffix": text[end:].strip(),
+        "span": span,
+    }
+
+
+def split_bracket_group_sub_chunks(bracket_content: str) -> JsonDict:
+    """Split first-level parenthesized conditions inside a square bracket group."""
+
+    sub_chunks: List[JsonDict] = []
+    logic_values: List[str] = []
+    parenthesis_spans = _parenthesis_spans(bracket_content)
+    for index, span in enumerate(parenthesis_spans):
+        inner_span = _trim_span(bracket_content, [span[0] + 1, span[1] - 1])
+        if inner_span[0] < inner_span[1]:
+            sub_chunks.append({"text": bracket_content[inner_span[0] : inner_span[1]], "span": inner_span})
+        if index + 1 < len(parenthesis_spans):
+            separator = bracket_content[span[1] : parenthesis_spans[index + 1][0]]
+            logic_match = re.search(r"\b(AND|OR)\b", separator, flags=re.IGNORECASE)
+            if logic_match:
+                logic_values.append(logic_match.group(1).upper())
+    logic = logic_values[0] if logic_values and all(value == logic_values[0] for value in logic_values) else None
+    return {"logic": logic, "sub_chunks": sub_chunks}
+
+
 def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
+    square_bracket_specs = _square_bracket_group_specs(text)
+    if square_bracket_specs:
+        return square_bracket_specs
+
     all_parenthesis_spans = _parenthesis_spans(text)
     parenthesis_spans = [
         span
@@ -127,6 +184,45 @@ def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
 
     span = _trim_span(text, [0, len(text)])
     return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "main_clause")]
+
+
+def _square_bracket_group_specs(text: str) -> List[tuple[list[int], str, str]]:
+    parts = split_square_bracket_condition_group(text)
+    if not parts:
+        return []
+
+    bracket_start, bracket_end = parts["span"]
+    specs: List[tuple[list[int], str, str]] = []
+
+    prefix_span = _trim_span(text, [0, bracket_start])
+    if prefix_span[0] < prefix_span[1]:
+        specs.append(
+            (
+                prefix_span,
+                _classify_main_chunk(text[prefix_span[0] : prefix_span[1]], has_special_structure=True),
+                "pre_bracket",
+            )
+        )
+
+    bracket_span = _trim_span(text, [bracket_start + 1, bracket_end - 1])
+    if bracket_span[0] < bracket_span[1]:
+        specs.append((bracket_span, "bracketed_condition_group", "bracketed_condition_group"))
+
+    suffix_span = _trim_span(text, [bracket_end, len(text)])
+    if suffix_span[0] < suffix_span[1]:
+        suffix_text = text[suffix_span[0] : suffix_span[1]]
+        suffix_type = "duration_constraint" if DURATION_PATTERN.fullmatch(suffix_text) else _classify_main_chunk(
+            suffix_text,
+            has_special_structure=False,
+        )
+        suffix_source = "temporal_phrase" if suffix_type == "duration_constraint" else "post_bracket"
+        specs.append((suffix_span, suffix_type, suffix_source))
+
+    return [
+        (span, chunk_type, source)
+        for span, chunk_type, source in specs
+        if not _is_trivial_punctuation_chunk(_clean_chunk_text(text[span[0] : span[1]]))
+    ]
 
 
 def _main_clause_specs(
@@ -178,6 +274,11 @@ def _parenthesis_spans(text: str) -> List[list[int]]:
                 spans.append([start, index + 1])
                 start = None
     return spans
+
+
+def _bracket_spans(text: str) -> List[list[int]]:
+    span = find_balanced_square_bracket_span(text)
+    return [span] if span else []
 
 
 def _classify_parenthesis_chunk(chunk_text: str) -> str:
@@ -237,6 +338,10 @@ def _clean_chunk_text(text: str) -> str:
     return cleaned
 
 
+def _clean_condition_text(text: str) -> str:
+    return _clean_chunk_text(text)
+
+
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:
     start, end = int(span[0]), int(span[1])
     while start < end and text[start].isspace():
@@ -272,6 +377,10 @@ def _span_contains(container_span: Sequence[int], child_span: Sequence[int]) -> 
     container_start, container_end = int(container_span[0]), int(container_span[1])
     child_start, child_end = int(child_span[0]), int(child_span[1])
     return container_start <= child_start and child_end <= container_end
+
+
+def _span_inside_any(span: Sequence[int], containers: Sequence[Sequence[int]]) -> bool:
+    return any(_span_contains(container, span) for container in containers)
 
 
 def _contains_entity_text(text: str, value: str) -> bool:
