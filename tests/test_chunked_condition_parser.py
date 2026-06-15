@@ -1,6 +1,9 @@
 import json
 
 from src.parser.chunked_condition_parser import (
+    classify_timing_relation,
+    extract_duration_value,
+    normalize_duration_operator,
     parse_atomic_chunk,
     parse_chunked_condition,
     parse_duration_constraint,
@@ -49,13 +52,12 @@ def test_parse_chunked_condition_merges_chunks_duration_and_equivalence_relation
     assert parsed["parsed_chunks"][1]["parse_result"]["type"] == "signal_state_condition"
     assert parsed["parsed_chunks"][1]["parse_result"]["signal"] == "S_VEHICLE_SPEED"
     assert parsed["parsed_chunks"][1]["parse_result"]["required_state"] == "INVALID"
-    assert parsed["parsed_chunks"][2]["parse_result"] == {
-        "condition_type": "duration_constraint",
-        "duration": "P_LIMIT",
-        "unit": None,
-        "operator": "for_duration",
-        "confidence": 0.9,
-    }
+    assert parsed["parsed_chunks"][2]["parse_result"]["condition_type"] == "duration_constraint"
+    assert parsed["parsed_chunks"][2]["parse_result"]["duration"] == "P_LIMIT"
+    assert parsed["parsed_chunks"][2]["parse_result"]["unit"] is None
+    assert parsed["parsed_chunks"][2]["parse_result"]["operator"] == "for_duration"
+    assert parsed["parsed_chunks"][2]["parse_result"]["timing_relation"] == "sustain_for"
+    assert parsed["parsed_chunks"][2]["parse_result"]["confidence"] == 0.9
     json.dumps(parsed)
 
 
@@ -117,27 +119,70 @@ def test_parse_chunked_condition_uses_natural_language_event_fallback():
 
 
 def test_parse_duration_constraint_supports_parameter_minimum_and_within_forms():
-    assert parse_duration_constraint("for a duration of P_LIMIT") == {
+    assert parse_duration_constraint("for a duration of P_LIMIT") | {"duration_type": "duration"} == {
         "condition_type": "duration_constraint",
+        "text": "for a duration of P_LIMIT",
         "duration": "P_LIMIT",
+        "value": None,
         "unit": None,
         "operator": "for_duration",
+        "timing_relation": "sustain_for",
         "confidence": 0.9,
+        "need_review": False,
+        "duration_type": "duration",
     }
-    assert parse_duration_constraint("for at least 100ms") == {
-        "condition_type": "duration_constraint",
-        "duration": 100,
-        "unit": "ms",
-        "operator": ">=",
-        "confidence": 0.9,
-    }
-    assert parse_duration_constraint("within 100ms") == {
-        "condition_type": "duration_constraint",
-        "duration": 100,
-        "unit": "ms",
-        "operator": "<=",
-        "confidence": 0.9,
-    }
+    parsed_at_least = parse_duration_constraint("for at least 100ms")
+    assert parsed_at_least["duration"] == 100
+    assert parsed_at_least["unit"] == "ms"
+    assert parsed_at_least["operator"] == ">="
+    assert parsed_at_least["timing_relation"] == "sustain_for"
+    parsed_within = parse_duration_constraint("within 100ms")
+    assert parsed_within["duration"] == 100
+    assert parsed_within["unit"] == "ms"
+    assert parsed_within["operator"] == "<="
+    assert parsed_within["timing_relation"] == "within_time"
+
+
+def test_parse_duration_constraint_supports_general_timing_forms():
+    examples = [
+        ("duration time is equal to or greater than P_TIME", ">=", "duration_compare", "P_TIME", None, None),
+        ("the duration is 200ms", "=", "duration_compare", 200, 200, "ms"),
+        ("for duration greater than P_TIME", ">", "sustain_for", "P_TIME", None, None),
+        ("for more than P_TIME", ">", "sustain_for", "P_TIME", None, None),
+        ("within the debounce time P_TIME", "<=", "within_time", "P_TIME", None, None),
+        ("in the debounce time P_TIME", "<=", "within_time", "P_TIME", None, None),
+        ("for P_TIME", "for_duration", "sustain_for", "P_TIME", None, None),
+        ("exceeding the debounce time P_TIME", ">", "exceed_time", "P_TIME", None, None),
+    ]
+
+    for text, operator, timing_relation, duration, value, unit in examples:
+        parsed = parse_duration_constraint(text)
+
+        assert parsed["condition_type"] == "duration_constraint"
+        assert parsed["duration"] == duration
+        assert parsed["operator"] == operator
+        assert parsed["timing_relation"] == timing_relation
+        assert parsed["value"] == value
+        assert parsed["unit"] == unit
+        assert parsed["need_review"] is False
+
+
+def test_duration_helpers_normalize_operator_relation_and_value():
+    assert normalize_duration_operator("duration time is equal to or greater than P_TIME") == ">="
+    assert normalize_duration_operator("for more than P_TIME") == ">"
+    assert classify_timing_relation("within the debounce time P_TIME") == "within_time"
+    assert extract_duration_value("the duration is 200ms") == {"duration": 200, "value": 200, "unit": "ms"}
+
+
+def test_parse_chunked_condition_parses_duration_inside_parenthesized_condition():
+    parsed = parse_chunked_condition("fault occurs (signal1 < signal2 for a xxx period of xxx P_TIME)")
+
+    duration_chunks = [
+        chunk for chunk in parsed["parsed_chunks"] if chunk["parse_result"].get("condition_type") == "duration_constraint"
+    ]
+
+    assert duration_chunks
+    assert duration_chunks[0]["parse_result"]["duration"] == "P_TIME"
 
 
 def test_parse_atomic_chunk_adapter_supports_syntactic_and_legacy_names():

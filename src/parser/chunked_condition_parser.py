@@ -1,7 +1,7 @@
 import re
 from typing import Sequence
 
-from src.parser.condition_semantic_chunker import chunk_condition_sentence
+from src.parser.condition_semantic_chunker import DURATION_NOUN_PATTERN, TIME_VALUE_PATTERN, chunk_condition_sentence
 from src.schemas import JsonDict, number_value
 
 
@@ -51,28 +51,23 @@ def parse_atomic_chunk(
 
 
 def parse_duration_constraint(text: str) -> JsonDict:
-    """Parse a simple duration constraint chunk."""
+    """Parse a duration or timing constraint chunk."""
 
     normalized = text.strip()
-    duration_of = re.fullmatch(r"for\s+a\s+duration\s+of\s+(?P<duration>\S+)", normalized, flags=re.IGNORECASE)
-    if duration_of:
-        return _duration_result(duration_of.group("duration"), None, "for_duration")
-
-    at_least = re.fullmatch(
-        r"for\s+at\s+least\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]+)?",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    if at_least:
-        return _duration_result(number_value(at_least.group("duration")), at_least.group("unit"), ">=")
-
-    within = re.fullmatch(
-        r"within\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]+)?",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    if within:
-        return _duration_result(number_value(within.group("duration")), within.group("unit"), "<=")
+    value_info = extract_duration_value(normalized)
+    if value_info.get("duration") is not None:
+        operator = normalize_duration_operator(normalized)
+        timing_relation = classify_timing_relation(normalized)
+        duration_type = _duration_type(normalized)
+        return _duration_result(
+            text=normalized,
+            duration=value_info["duration"],
+            value=value_info.get("value"),
+            unit=value_info.get("unit"),
+            operator=operator,
+            timing_relation=timing_relation,
+            duration_type=duration_type,
+        )
 
     return {
         "condition_type": "duration_constraint",
@@ -80,6 +75,56 @@ def parse_duration_constraint(text: str) -> JsonDict:
         "need_review": True,
         "confidence": 0.3,
     }
+
+
+def normalize_duration_operator(text: str) -> str:
+    normalized = _normalize_spaces(text).lower()
+    if re.search(r"\b(?:equal to or greater than|greater than or equal to|at least|no less than|not less than)\b", normalized):
+        return ">="
+    if re.search(r"\b(?:equal to or less than|less than or equal to|at most|no more than|not more than)\b", normalized):
+        return "<="
+    if re.search(r"\b(?:greater than|more than|longer than|above|exceeding|exceeds)\b", normalized):
+        return ">"
+    if re.search(r"\b(?:less than|shorter than|below|under)\b", normalized):
+        return "<"
+    if re.search(r"\b(?:is equal to|equals|equal to)\b", normalized):
+        return "="
+    if re.search(rf"\b(?:the\s+|a\s+)?{DURATION_NOUN_PATTERN}\s+is\b", normalized):
+        return "="
+    if normalized.startswith(("within ", "in ")):
+        return "<="
+    if normalized.startswith("for "):
+        return "for_duration"
+    return "for_duration"
+
+
+def classify_timing_relation(text: str) -> str:
+    normalized = _normalize_spaces(text).lower()
+    if normalized.startswith(("within ", "in ")):
+        return "within_time"
+    if normalized.startswith(("exceeding ", "exceeds ")):
+        return "exceed_time"
+    if normalized.startswith("for "):
+        return "sustain_for"
+    return "duration_compare"
+
+
+def extract_duration_value(text: str) -> JsonDict:
+    normalized = text.strip()
+    matches = list(re.finditer(TIME_VALUE_PATTERN, normalized, flags=re.IGNORECASE))
+    if not matches:
+        return {"duration": None, "value": None, "unit": None}
+
+    raw_value = matches[-1].group(0).strip()
+    number_unit = re.fullmatch(
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>ms|s|sec|secs|second|seconds|msec|milliseconds)",
+        raw_value,
+        flags=re.IGNORECASE,
+    )
+    if number_unit:
+        value = number_value(number_unit.group("value"))
+        return {"duration": value, "value": value, "unit": number_unit.group("unit")}
+    return {"duration": raw_value, "value": None, "unit": None}
 
 
 def _parse_chunk(chunk: JsonDict, atomic_parser: str) -> JsonDict:
@@ -146,11 +191,50 @@ def _relations_for_chunks(chunks: Sequence[JsonDict]) -> list[JsonDict]:
     return relations
 
 
-def _duration_result(duration: object, unit: str | None, operator: str) -> JsonDict:
-    return {
+def _duration_result(
+    text: str,
+    duration: object,
+    value: object | None,
+    unit: str | None,
+    operator: str,
+    timing_relation: str,
+    duration_type: str | None,
+) -> JsonDict:
+    result = {
         "condition_type": "duration_constraint",
+        "text": text,
         "duration": duration,
+        "value": value,
         "unit": unit,
         "operator": operator,
+        "timing_relation": timing_relation,
         "confidence": 0.9,
+        "need_review": False,
     }
+    if duration_type:
+        result["duration_type"] = duration_type
+    return result
+
+
+def _duration_type(text: str) -> str | None:
+    normalized = _normalize_spaces(text).lower()
+    for pattern, duration_type in (
+        (r"\bdebounce\s+time\b", "debounce_time"),
+        (r"\bdebounce\s+period\b", "debounce_period"),
+        (r"\bdelay\s+time\b", "delay_time"),
+        (r"\btime\s+window\b", "time_window"),
+        (r"\btime\s+interval\b", "time_interval"),
+        (r"\bduration\s+time\b", "duration_time"),
+        (r"\bduration\b", "duration"),
+        (r"\bperiod\b", "period"),
+        (r"\btimer\b", "timer"),
+        (r"\btimeout\b", "timeout"),
+        (r"\btime\b", "time"),
+    ):
+        if re.search(pattern, normalized):
+            return duration_type
+    return None
+
+
+def _normalize_spaces(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip())

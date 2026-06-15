@@ -155,6 +155,40 @@ def test_chunk_condition_sentence_treats_square_brackets_as_condition_group_cont
     assert "]" not in result["chunks"][1]["text"]
 
 
+def test_chunk_condition_sentence_splits_general_duration_phrases_after_and():
+    examples = [
+        ("signal is invalid and duration time is equal to or greater than P_TIME", "duration time is equal to or greater than P_TIME"),
+        ("signal is invalid and the duration is 200ms", "the duration is 200ms"),
+        ("signal is invalid for duration greater than P_TIME", "for duration greater than P_TIME"),
+        ("signal is invalid for more than P_TIME", "for more than P_TIME"),
+        ("signal is invalid within the debounce time P_TIME", "within the debounce time P_TIME"),
+        ("signal is invalid in the debounce time P_TIME", "in the debounce time P_TIME"),
+        ("signal is invalid for P_TIME", "for P_TIME"),
+        ("signal is invalid exceeding the debounce time P_TIME", "exceeding the debounce time P_TIME"),
+    ]
+
+    for text, expected_duration_text in examples:
+        result = chunk_condition_sentence(text, normalized_entities=[])
+
+        assert result["chunks"][-1]["chunk_type"] == "duration_constraint"
+        assert result["chunks"][-1]["source"] == "temporal_phrase"
+        assert result["chunks"][-1]["text"] == expected_duration_text
+        assert not result["chunks"][-1]["text"].lower().startswith("and ")
+
+
+def test_chunk_condition_sentence_splits_duration_inside_parenthesized_condition():
+    text = "fault occurs (signal1 < signal2 for a xxx period of xxx P_TIME)"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert [chunk["chunk_type"] for chunk in result["chunks"]] == [
+        "natural_language_event",
+        "explicit_signal_definition",
+        "duration_constraint",
+    ]
+    assert result["chunks"][2]["text"] == "for a xxx period of xxx P_TIME"
+
+
 def test_find_balanced_square_bracket_span_returns_outer_span_or_none():
     text = "prefix[(S_A is equal to normal) AND (S_B is greater than 'static limit')] suffix"
 

@@ -4,13 +4,29 @@ from typing import List, Sequence
 from src.schemas import JsonDict
 
 
+TIME_VALUE_PATTERN = r"(?:'[^\']+'|\"[^\"]+\"|P_[A-Z0-9_]+|\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|second|seconds|msec|milliseconds)?)"
+DURATION_NOUN_PATTERN = (
+    r"(?:duration\s+time|debounce\s+period|debounce\s+time|delay\s+time|time\s+window|"
+    r"time\s+interval|duration|period|timer|timeout|time)"
+)
+DURATION_OPERATOR_PATTERN = (
+    r"(?:is\s+equal\s+to\s+or\s+greater\s+than|equal\s+to\s+or\s+greater\s+than|"
+    r"greater\s+than\s+or\s+equal\s+to|is\s+greater\s+than|greater\s+than|more\s+than|"
+    r"longer\s+than|above|at\s+least|no\s+less\s+than|not\s+less\s+than|"
+    r"is\s+equal\s+to\s+or\s+less\s+than|equal\s+to\s+or\s+less\s+than|"
+    r"less\s+than\s+or\s+equal\s+to|is\s+less\s+than|less\s+than|shorter\s+than|"
+    r"below|under|at\s+most|no\s+more\s+than|not\s+more\s+than|"
+    r"is\s+equal\s+to|equals|equal\s+to|is)"
+)
 DURATION_PATTERN = re.compile(
-    r"\b(?:"
-    r"for\s+a\s+duration\s+of\s+\S+|"
-    r"for\s+a\s+duration\s+greater\s+than\s+\S+|"
-    r"for\s+at\s+least\s+\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|second|seconds|msec|milliseconds)?|"
-    r"within\s+\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|second|seconds|msec|milliseconds)?"
-    r")\b",
+    rf"\b(?:"
+    rf"(?:and\s+)?(?:the\s+|a\s+)?{DURATION_NOUN_PATTERN}\s+{DURATION_OPERATOR_PATTERN}\s+{TIME_VALUE_PATTERN}|"
+    rf"(?:and\s+)?for\s+(?:(?:a|the)\s+)?(?:[A-Za-z0-9_]+\s+)*{DURATION_NOUN_PATTERN}\s+(?:(?:[A-Za-z0-9_]+\s+)*of\s+(?:[A-Za-z0-9_]+\s+)*)?(?:{DURATION_OPERATOR_PATTERN}\s+)?{TIME_VALUE_PATTERN}|"
+    rf"(?:and\s+)?for\s+(?:at\s+least|more\s+than|greater\s+than|longer\s+than|no\s+less\s+than|not\s+less\s+than|at\s+most|no\s+more\s+than|not\s+more\s+than|less\s+than|shorter\s+than)?\s*{TIME_VALUE_PATTERN}|"
+    rf"(?:and\s+)?(?:within|in)\s+(?:(?:a|the)\s+)?(?:[A-Za-z0-9_]+\s+)*{DURATION_NOUN_PATTERN}\s+{TIME_VALUE_PATTERN}|"
+    rf"(?:and\s+)?within\s+{TIME_VALUE_PATTERN}|"
+    rf"(?:and\s+)?(?:exceeding|exceeds)\s+(?:(?:a|the)\s+)?(?:[A-Za-z0-9_]+\s+)*{DURATION_NOUN_PATTERN}\s+{TIME_VALUE_PATTERN}"
+    rf")\b",
     flags=re.IGNORECASE,
 )
 EXPLICIT_SIGNAL_PATTERN = re.compile(r"\b(?:S_[A-Z0-9_]+|DEM_[A-Z0-9_]+)\b")
@@ -142,12 +158,16 @@ def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
         return square_bracket_specs
 
     all_parenthesis_spans = _parenthesis_spans(text)
+    parenthesis_duration_specs = _parenthesis_duration_chunk_specs(text, all_parenthesis_spans)
+    if parenthesis_duration_specs:
+        return parenthesis_duration_specs
+
     parenthesis_spans = [
         span
         for span in all_parenthesis_spans
         if _should_split_parenthesis(text[span[0] + 1 : span[1] - 1])
     ]
-    duration_spans = [_trim_span(text, [match.start(), match.end()]) for match in DURATION_PATTERN.finditer(text)]
+    duration_spans = [_duration_match_span(text, match) for match in DURATION_PATTERN.finditer(text)]
     occupied_spans = sorted(parenthesis_spans + duration_spans, key=lambda span: span[0])
 
     if all_parenthesis_spans and not occupied_spans:
@@ -225,6 +245,41 @@ def _square_bracket_group_specs(text: str) -> List[tuple[list[int], str, str]]:
     ]
 
 
+def _parenthesis_duration_chunk_specs(
+    text: str,
+    parenthesis_spans: Sequence[Sequence[int]],
+) -> List[tuple[list[int], str, str]]:
+    for parenthesis_span in parenthesis_spans:
+        inner_start, inner_end = int(parenthesis_span[0]) + 1, int(parenthesis_span[1]) - 1
+        duration_spans = [
+            _duration_match_span(text, match)
+            for match in DURATION_PATTERN.finditer(text)
+            if inner_start <= match.start() and match.end() <= inner_end
+        ]
+        if not duration_spans:
+            continue
+
+        specs: List[tuple[list[int], str, str]] = []
+        specs.extend(_main_clause_specs(text, [0, int(parenthesis_span[0])], int(parenthesis_span[0])))
+
+        cursor = inner_start
+        for duration_span in duration_spans:
+            before_span = _trim_span(text, [cursor, duration_span[0]])
+            if before_span[0] < before_span[1]:
+                specs.append((before_span, _classify_parenthesis_chunk(text[before_span[0] : before_span[1]]), "parenthesis"))
+            specs.append((duration_span, "duration_constraint", "temporal_phrase"))
+            cursor = duration_span[1]
+
+        after_span = _trim_span(text, [cursor, inner_end])
+        if after_span[0] < after_span[1]:
+            specs.append((after_span, _classify_parenthesis_chunk(text[after_span[0] : after_span[1]]), "parenthesis"))
+
+        if int(parenthesis_span[1]) < len(text):
+            specs.extend(_main_clause_specs(text, [int(parenthesis_span[1]), len(text)], int(parenthesis_span[0])))
+        return _clean_specs(text, specs)
+    return []
+
+
 def _main_clause_specs(
     text: str,
     raw_span: list[int],
@@ -257,6 +312,16 @@ def _build_chunk(
         "confidence": _confidence_for_chunk_type(chunk_type),
         "need_review": chunk_type == "natural_language_event",
     }
+
+
+def _duration_match_span(text: str, match: re.Match[str]) -> list[int]:
+    span = _trim_span(text, [match.start(), match.end()])
+    matched_text = text[span[0] : span[1]]
+    and_match = re.match(r"and\s+", matched_text, flags=re.IGNORECASE)
+    if and_match:
+        span[0] += and_match.end()
+        span = _trim_span(text, span)
+    return span
 
 
 def _parenthesis_spans(text: str) -> List[list[int]]:
@@ -340,6 +405,21 @@ def _clean_chunk_text(text: str) -> str:
 
 def _clean_condition_text(text: str) -> str:
     return _clean_chunk_text(text)
+
+
+def _clean_specs(
+    text: str,
+    specs: Sequence[tuple[list[int], str, str]],
+) -> List[tuple[list[int], str, str]]:
+    cleaned_specs = []
+    for span, chunk_type, source in specs:
+        if span[0] >= span[1]:
+            continue
+        chunk_text = _clean_chunk_text(text[span[0] : span[1]])
+        if not chunk_text or _is_trivial_punctuation_chunk(chunk_text):
+            continue
+        cleaned_specs.append((span, chunk_type, source))
+    return cleaned_specs
 
 
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:
