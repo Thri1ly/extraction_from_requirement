@@ -65,6 +65,57 @@ def test_chunk_condition_sentence_splits_parenthesized_definition_and_duration()
     json.dumps(result)
 
 
+def test_chunk_condition_sentence_ignores_trailing_period_after_duration():
+    text = "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID) for a duration of P_LIMIT."
+    result = chunk_condition_sentence(
+        text,
+        normalized_entities=[
+            {"mention": "vehicle speed", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "INVALID", "type": "STATE", "canonical_name": "INVALID"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert len(result["chunks"]) == 3
+    assert "." not in [chunk["text"] for chunk in result["chunks"]]
+    assert result["chunks"][2]["text"] == "for a duration of P_LIMIT"
+
+
+def test_chunk_condition_sentence_keeps_parenthesized_signal_alias_in_one_chunk():
+    text = "vehicle speed(S_VEHICLE_SPEED) is invalid"
+    result = chunk_condition_sentence(
+        text,
+        normalized_entities=[
+            {"mention": "vehicle speed", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "invalid", "type": "STATE", "canonical_name": "INVALID"},
+        ],
+    )
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["text"] == text
+    assert result["chunks"][0]["chunk_type"] in {"atomic_condition", "natural_language_condition"}
+    assert result["chunks"][0]["source"] == "full_sentence"
+    assert all(chunk["chunk_type"] != "explicit_signal_definition" for chunk in result["chunks"])
+
+
+def test_chunk_condition_sentence_still_splits_parenthesized_explicit_condition():
+    text = "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID)"
+    result = chunk_condition_sentence(
+        text,
+        normalized_entities=[
+            {"mention": "vehicle speed", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "INVALID", "type": "STATE", "canonical_name": "INVALID"},
+        ],
+    )
+
+    assert len(result["chunks"]) == 2
+    assert result["chunks"][0]["chunk_type"] == "natural_language_condition"
+    assert result["chunks"][1]["chunk_type"] == "explicit_signal_definition"
+
+
 def test_chunk_condition_sentence_assigns_entities_to_each_matching_chunk():
     text = "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID) for a duration of P_LIMIT"
     result = chunk_condition_sentence(

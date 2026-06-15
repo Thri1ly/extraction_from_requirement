@@ -84,9 +84,18 @@ def entities_for_span(
 
 
 def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
-    parenthesis_spans = _parenthesis_spans(text)
+    all_parenthesis_spans = _parenthesis_spans(text)
+    parenthesis_spans = [
+        span
+        for span in all_parenthesis_spans
+        if _should_split_parenthesis(text[span[0] + 1 : span[1] - 1])
+    ]
     duration_spans = [_trim_span(text, [match.start(), match.end()]) for match in DURATION_PATTERN.finditer(text)]
     occupied_spans = sorted(parenthesis_spans + duration_spans, key=lambda span: span[0])
+
+    if all_parenthesis_spans and not occupied_spans:
+        span = _trim_span(text, [0, len(text)])
+        return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "full_sentence")]
 
     specs: List[tuple[list[int], str, str]] = []
     cursor = 0
@@ -105,11 +114,14 @@ def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
     if cursor < len(text):
         specs.extend(_main_clause_specs(text, [cursor, len(text)], first_parenthesis_start))
 
-    cleaned_specs = [
-        (span, chunk_type, source)
-        for span, chunk_type, source in specs
-        if span[0] < span[1] and text[span[0] : span[1]].strip()
-    ]
+    cleaned_specs = []
+    for span, chunk_type, source in specs:
+        if span[0] >= span[1]:
+            continue
+        chunk_text = _clean_chunk_text(text[span[0] : span[1]])
+        if not chunk_text or _is_trivial_punctuation_chunk(chunk_text):
+            continue
+        cleaned_specs.append((span, chunk_type, source))
     if cleaned_specs:
         return cleaned_specs
 
@@ -138,10 +150,11 @@ def _build_chunk(
     chunk_type: str,
     source: str,
 ) -> JsonDict:
+    chunk_text = _clean_chunk_text(text[span[0] : span[1]])
     return {
         "chunk_id": f"CHUNK_{index}",
         "chunk_type": chunk_type,
-        "text": text[span[0] : span[1]],
+        "text": chunk_text,
         "span": span,
         "entities": [],
         "source": source,
@@ -171,6 +184,10 @@ def _classify_parenthesis_chunk(chunk_text: str) -> str:
     if EXPLICIT_SIGNAL_PATTERN.search(chunk_text) or EXPLICIT_OPERATOR_PATTERN.search(chunk_text):
         return "explicit_signal_definition"
     return _classify_main_chunk(chunk_text, has_special_structure=True)
+
+
+def _should_split_parenthesis(chunk_text: str) -> bool:
+    return bool(EXPLICIT_OPERATOR_PATTERN.search(chunk_text))
 
 
 def _classify_main_chunk(chunk_text: str, has_special_structure: bool) -> str:
@@ -207,6 +224,17 @@ def _chunk_rules(chunks: Sequence[JsonDict]) -> List[JsonDict]:
         }
         for chunk in chunks
     ]
+
+
+def _is_trivial_punctuation_chunk(text: str) -> bool:
+    return bool(re.fullmatch(r"[.,;:]+", text.strip()))
+
+
+def _clean_chunk_text(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.endswith(".") and not re.search(r"\d+\.\d+\w*$", cleaned):
+        cleaned = cleaned[:-1].rstrip()
+    return cleaned
 
 
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:
