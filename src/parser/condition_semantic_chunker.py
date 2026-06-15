@@ -38,6 +38,11 @@ CONDITION_RELATION_PATTERN = re.compile(
     r"\b(?:is|are|be|shall\s+be|should\s+be|must\s+be|become|becomes|remain|remains)\b",
     flags=re.IGNORECASE,
 )
+CONDITION_STATUS_PATTERN = re.compile(
+    r"\b(?:valid|invalid|active|inactive|available|unavailable|degraded|enabled|disabled|failed|faulted)\b",
+    flags=re.IGNORECASE,
+)
+TOP_LEVEL_CONNECTOR_PATTERN = re.compile(r"\b(and|or|but)\b", flags=re.IGNORECASE)
 
 
 def chunk_condition_sentence(
@@ -49,10 +54,7 @@ def chunk_condition_sentence(
     entities = list(normalized_entities or [])
     chunk_text_source = _clean_condition_text(text)
     chunk_specs = _collect_chunk_specs(chunk_text_source)
-    chunks = [
-        _build_chunk(index, chunk_text_source, span, chunk_type, source)
-        for index, (span, chunk_type, source) in enumerate(chunk_specs, start=1)
-    ]
+    chunks = [_build_chunk_from_spec(index, chunk_text_source, spec) for index, spec in enumerate(chunk_specs, start=1)]
     chunks = assign_entities_to_chunks(chunks, entities)
     return {
         "raw_text": text,
@@ -152,7 +154,72 @@ def split_bracket_group_sub_chunks(bracket_content: str) -> JsonDict:
     return {"logic": logic, "sub_chunks": sub_chunks}
 
 
-def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
+def split_top_level_logical_clauses(text: str) -> list[JsonDict]:
+    """Split only top-level logical clauses when both sides look condition-like."""
+
+    clauses: list[JsonDict] = []
+    cursor = 0
+    for match in TOP_LEVEL_CONNECTOR_PATTERN.finditer(text):
+        connector_span = [match.start(), match.end()]
+        if is_protected_connector(text, connector_span) or not _is_top_level_span(text, connector_span):
+            continue
+
+        left_span = _trim_span(text, [cursor, match.start()])
+        right_span = _trim_span(text, [match.end(), len(text)])
+        if left_span[0] >= left_span[1] or right_span[0] >= right_span[1]:
+            continue
+        if not looks_like_complete_condition(text[left_span[0] : left_span[1]]):
+            continue
+        if not looks_like_complete_condition(text[right_span[0] : right_span[1]]):
+            continue
+
+        clauses.append(
+            {
+                "text": text[left_span[0] : left_span[1]],
+                "span": left_span,
+                "logic_after": match.group(1).upper(),
+            }
+        )
+        cursor = match.end()
+
+    if not clauses:
+        return []
+
+    tail_span = _trim_span(text, [cursor, len(text)])
+    if tail_span[0] < tail_span[1]:
+        clauses.append({"text": text[tail_span[0] : tail_span[1]], "span": tail_span})
+    return clauses
+
+
+def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:
+    left = text[: int(connector_span[0])]
+    right = text[int(connector_span[1]) :]
+    left_normalized = re.sub(r"\s+", " ", left).lower()
+    right_normalized = re.sub(r"\s+", " ", right).lower()
+
+    if re.search(r"\bin\s+range\s+of\b[^()]*$", left_normalized):
+        return True
+    if re.search(r"\bbetween\b[^()]*$", left_normalized):
+        return True
+    if re.search(r"\b(?:at\s+least\s+)?one\s+of\b[^()]*$", left_normalized):
+        return True
+    if re.search(r"\bboth\b[^()]*$", left_normalized) and re.search(r"\b(?:is|are|valid|invalid|active|inactive|available|degraded)\b", right_normalized):
+        return True
+    return False
+
+
+def looks_like_complete_condition(text: str) -> bool:
+    candidate = text.strip()
+    return bool(
+        CONDITION_RELATION_PATTERN.search(candidate)
+        or EXPLICIT_OPERATOR_PATTERN.search(candidate)
+        or CONDITION_STATUS_PATTERN.search(candidate)
+        or EXPLICIT_SIGNAL_PATTERN.search(candidate)
+        or re.search(r"\b(?:COMPONENT|SIGNAL)\b", candidate, flags=re.IGNORECASE)
+    )
+
+
+def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tuple]:
     square_bracket_specs = _square_bracket_group_specs(text)
     if square_bracket_specs:
         return square_bracket_specs
@@ -162,15 +229,36 @@ def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
     if parenthesis_duration_specs:
         return parenthesis_duration_specs
 
+    duration_spans = [_duration_match_span(text, match) for match in DURATION_PATTERN.finditer(text)]
+    if duration_spans:
+        parenthesis_spans = [
+            span
+            for span in all_parenthesis_spans
+            if _should_split_parenthesis(text[span[0] + 1 : span[1] - 1])
+        ]
+        return _collect_occupied_span_specs(text, parenthesis_spans, duration_spans)
+
+    if allow_logical_split:
+        logical_specs = _logical_clause_specs(text)
+        if logical_specs:
+            return logical_specs
+
     parenthesis_spans = [
         span
         for span in all_parenthesis_spans
         if _should_split_parenthesis(text[span[0] + 1 : span[1] - 1])
     ]
-    duration_spans = [_duration_match_span(text, match) for match in DURATION_PATTERN.finditer(text)]
+    return _collect_occupied_span_specs(text, parenthesis_spans, [])
+
+
+def _collect_occupied_span_specs(
+    text: str,
+    parenthesis_spans: Sequence[Sequence[int]],
+    duration_spans: Sequence[Sequence[int]],
+) -> List[tuple]:
     occupied_spans = sorted(parenthesis_spans + duration_spans, key=lambda span: span[0])
 
-    if all_parenthesis_spans and not occupied_spans:
+    if _parenthesis_spans(text) and not occupied_spans:
         span = _trim_span(text, [0, len(text)])
         return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "full_sentence")]
 
@@ -204,6 +292,31 @@ def _collect_chunk_specs(text: str) -> List[tuple[list[int], str, str]]:
 
     span = _trim_span(text, [0, len(text)])
     return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "main_clause")]
+
+
+def _logical_clause_specs(text: str) -> List[tuple]:
+    clauses = split_top_level_logical_clauses(text)
+    if len(clauses) <= 1:
+        return []
+
+    specs: List[tuple] = []
+    for clause in clauses:
+        clause_span = clause["span"]
+        clause_text = text[clause_span[0] : clause_span[1]]
+        clause_specs = _collect_chunk_specs(clause_text, allow_logical_split=False)
+        offset_specs: List[tuple] = []
+        for spec in clause_specs:
+            span, chunk_type, source, metadata = _normalize_spec(spec)
+            offset_specs.append(([span[0] + clause_span[0], span[1] + clause_span[0]], chunk_type, source, metadata))
+        if offset_specs and clause.get("logic_after"):
+            span, chunk_type, source, metadata = offset_specs[-1]
+            metadata = dict(metadata)
+            metadata["logic_after"] = clause["logic_after"]
+            if clause["logic_after"] == "BUT":
+                metadata["semantic_relation"] = "contrast"
+            offset_specs[-1] = (span, chunk_type, source, metadata)
+        specs.extend(offset_specs)
+    return specs
 
 
 def _square_bracket_group_specs(text: str) -> List[tuple[list[int], str, str]]:
@@ -294,6 +407,13 @@ def _main_clause_specs(
     return [(span, _classify_main_chunk(chunk_text, has_special_structure=first_parenthesis_start is not None), source)]
 
 
+def _build_chunk_from_spec(index: int, text: str, spec: tuple) -> JsonDict:
+    span, chunk_type, source, metadata = _normalize_spec(spec)
+    chunk = _build_chunk(index, text, span, chunk_type, source)
+    chunk.update(metadata)
+    return chunk
+
+
 def _build_chunk(
     index: int,
     text: str,
@@ -312,6 +432,14 @@ def _build_chunk(
         "confidence": _confidence_for_chunk_type(chunk_type),
         "need_review": chunk_type == "natural_language_event",
     }
+
+
+def _normalize_spec(spec: tuple) -> tuple[list[int], str, str, JsonDict]:
+    if len(spec) == 4:
+        span, chunk_type, source, metadata = spec
+        return list(span), str(chunk_type), str(source), dict(metadata)
+    span, chunk_type, source = spec
+    return list(span), str(chunk_type), str(source), {}
 
 
 def _duration_match_span(text: str, match: re.Match[str]) -> list[int]:
@@ -420,6 +548,31 @@ def _clean_specs(
             continue
         cleaned_specs.append((span, chunk_type, source))
     return cleaned_specs
+
+
+def _is_top_level_span(text: str, span: Sequence[int]) -> bool:
+    target = int(span[0])
+    paren_depth = 0
+    bracket_depth = 0
+    quote: str | None = None
+    index = 0
+    while index < target:
+        char = text[index]
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth:
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        index += 1
+    return quote is None and paren_depth == 0 and bracket_depth == 0
 
 
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:

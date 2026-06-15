@@ -189,6 +189,71 @@ def test_chunk_condition_sentence_splits_duration_inside_parenthesized_condition
     assert result["chunks"][2]["text"] == "for a xxx period of xxx P_TIME"
 
 
+def test_chunk_condition_sentence_splits_top_level_and_conditions():
+    result = chunk_condition_sentence("S_A is valid and S_B is invalid", normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == ["S_A is valid", "S_B is invalid"]
+    assert result["chunks"][0]["logic_after"] == "AND"
+    assert "logic_after" not in result["chunks"][1]
+
+
+def test_chunk_condition_sentence_splits_top_level_and_without_breaking_alias_parentheses():
+    text = "vehicle speed(S_VEHICLE_SPEED) is invalid and EPS state(S_EPS_STATE) is Degraded"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == [
+        "vehicle speed(S_VEHICLE_SPEED) is invalid",
+        "EPS state(S_EPS_STATE) is Degraded",
+    ]
+    assert result["chunks"][0]["logic_after"] == "AND"
+
+
+def test_chunk_condition_sentence_splits_top_level_parenthesized_clause_before_parenthesis_rules():
+    text = "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID) and EPS is Degraded"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == [
+        "vehicle speed is invalid",
+        "S_VEHICLE_SPEED is equal to INVALID",
+        "EPS is Degraded",
+    ]
+    assert result["chunks"][1]["logic_after"] == "AND"
+
+
+def test_chunk_condition_sentence_splits_top_level_or_conditions():
+    result = chunk_condition_sentence("S_A is valid or S_B is valid", normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == ["S_A is valid", "S_B is valid"]
+    assert result["chunks"][0]["logic_after"] == "OR"
+
+
+def test_chunk_condition_sentence_splits_top_level_but_as_contrast():
+    result = chunk_condition_sentence("S_A is valid but S_B is invalid", normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == ["S_A is valid", "S_B is invalid"]
+    assert result["chunks"][0]["logic_after"] == "BUT"
+    assert result["chunks"][0]["semantic_relation"] == "contrast"
+
+
+def test_chunk_condition_sentence_does_not_split_protected_top_level_connectors():
+    examples = [
+        'S_A is equal to "Valid and Available"',
+        "one of S_A and S_B is valid",
+        "at least one of S_A and S_B is valid",
+        "both S_A and S_B are valid",
+        "vehicle speed is in range of 50kph and 100kph",
+        "vehicle speed is between 50kph and 100kph",
+    ]
+
+    for text in examples:
+        result = chunk_condition_sentence(text, normalized_entities=[])
+
+        assert len(result["chunks"]) == 1
+        assert result["chunks"][0]["text"] == text
+
+
 def test_find_balanced_square_bracket_span_returns_outer_span_or_none():
     text = "prefix[(S_A is equal to normal) AND (S_B is greater than 'static limit')] suffix"
 
