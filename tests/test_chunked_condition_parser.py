@@ -185,6 +185,57 @@ def test_parse_chunked_condition_parses_duration_inside_parenthesized_condition(
     assert duration_chunks[0]["parse_result"]["duration"] == "P_TIME"
 
 
+def test_parse_chunked_condition_parses_phase_timing_constraint():
+    parsed = parse_chunked_condition("both steer angle request are timeout before activation")
+
+    timing_chunks = [
+        chunk for chunk in parsed["parsed_chunks"] if chunk["chunk_type"] == "phase_timing_constraint"
+    ]
+
+    assert timing_chunks
+    assert timing_chunks[0]["parse_result"] == {
+        "condition_type": "phase_timing_constraint",
+        "timing_relation": "before_phase",
+        "phase": "activation",
+        "confidence": 0.9,
+    }
+
+
+def test_parse_chunked_condition_parses_temporal_context_constraint():
+    parsed = parse_chunked_condition("an ASP check failure is detected during a {journey}")
+
+    context_chunks = [
+        chunk for chunk in parsed["parsed_chunks"] if chunk["chunk_type"] == "temporal_context_constraint"
+    ]
+
+    assert context_chunks
+    assert context_chunks[0]["parse_result"] == {
+        "condition_type": "temporal_context_constraint",
+        "timing_relation": "during_context",
+        "context": "journey",
+        "relative_time": None,
+        "confidence": 0.9,
+    }
+
+
+def test_parse_chunked_condition_parses_previous_temporal_context_constraint():
+    parsed = parse_chunked_condition("ASP check failure has been detected during the previous {journey}")
+
+    context_chunks = [
+        chunk for chunk in parsed["parsed_chunks"] if chunk["chunk_type"] == "temporal_context_constraint"
+    ]
+
+    assert context_chunks[0]["parse_result"]["context"] == "journey"
+    assert context_chunks[0]["parse_result"]["relative_time"] == "previous"
+
+
+def test_parse_chunked_condition_does_not_parse_from_source_as_temporal_context():
+    parsed = parse_chunked_condition("steer angle signal requests to exit from CAN1")
+
+    assert len(parsed["chunks"]) == 1
+    assert all(chunk["chunk_type"] != "temporal_context_constraint" for chunk in parsed["parsed_chunks"])
+
+
 def test_parse_atomic_chunk_adapter_supports_syntactic_and_legacy_names():
     entities = [
         {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},

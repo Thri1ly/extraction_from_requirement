@@ -44,6 +44,35 @@ CONDITION_STATUS_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 TOP_LEVEL_CONNECTOR_PATTERN = re.compile(r"\b(and|or|but)\b", flags=re.IGNORECASE)
+PHASE_WORDS = [
+    "normal operation",
+    "activation",
+    "initialization",
+    "startup",
+    "reset",
+    "shutdown",
+    "operation",
+]
+CONTEXT_WORDS = [
+    "driving cycle",
+    "ignition cycle",
+    "operation cycle",
+    "journey",
+    "cycle",
+    "trip",
+]
+PHASE_TIMING_PATTERN = re.compile(
+    rf"\b(?P<marker>before|prior\s+to|ahead\s+of|after|following|subsequent\s+to)\s+"
+    rf"(?P<phase>{'|'.join(re.escape(word) for word in PHASE_WORDS)})\b",
+    flags=re.IGNORECASE,
+)
+TEMPORAL_CONTEXT_PATTERN = re.compile(
+    rf"\b(?P<marker>during|in)\s+(?:(?:a|an|the)\s+)?"
+    rf"(?:(?P<relative>previous|last|prior|current|present)\s+)?"
+    rf"(?P<context_braced>\{{\s*(?P<braced_context>{'|'.join(re.escape(word) for word in CONTEXT_WORDS)})\s*\}}|"
+    rf"(?P<context>{'|'.join(re.escape(word) for word in CONTEXT_WORDS)}))(?=\W|$)",
+    flags=re.IGNORECASE,
+)
 
 
 def chunk_condition_sentence(
@@ -195,6 +224,20 @@ def split_top_level_logical_clauses(text: str) -> list[JsonDict]:
     return clauses
 
 
+def extract_phase_timing_constraint(text: str) -> JsonDict | None:
+    match = PHASE_TIMING_PATTERN.search(text)
+    if not match or not _is_top_level_span(text, [match.start(), match.end()]):
+        return None
+    return _phase_timing_constraint_from_match(match)
+
+
+def extract_temporal_context_constraint(text: str) -> JsonDict | None:
+    match = TEMPORAL_CONTEXT_PATTERN.search(text)
+    if not match or not _is_top_level_span(text, [match.start(), match.end()]):
+        return None
+    return _temporal_context_constraint_from_match(match)
+
+
 def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:
     left = text[: int(connector_span[0])]
     right = text[int(connector_span[1]) :]
@@ -241,6 +284,10 @@ def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tu
             if _should_split_parenthesis(text[span[0] + 1 : span[1] - 1])
         ]
         return _collect_occupied_span_specs(text, parenthesis_spans, duration_spans)
+
+    temporal_specs = _temporal_constraint_specs(text)
+    if temporal_specs:
+        return temporal_specs
 
     if allow_logical_split:
         logical_specs = _logical_clause_specs(text)
@@ -296,6 +343,33 @@ def _collect_occupied_span_specs(
 
     span = _trim_span(text, [0, len(text)])
     return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "main_clause")]
+
+
+def _temporal_constraint_specs(text: str) -> List[tuple]:
+    constraints = [
+        constraint
+        for constraint in (
+            extract_phase_timing_constraint(text),
+            extract_temporal_context_constraint(text),
+        )
+        if constraint
+    ]
+    if not constraints:
+        return []
+    constraint = sorted(constraints, key=lambda item: item["span"][0])[0]
+    span = constraint["span"]
+    specs: List[tuple] = []
+    if span[0] > 0:
+        specs.extend(_main_clause_specs(text, [0, span[0]], None))
+    metadata = dict(constraint)
+    metadata.pop("span", None)
+    metadata.pop("chunk_type", None)
+    metadata.pop("source", None)
+    metadata.pop("text", None)
+    specs.append((span, constraint["chunk_type"], "temporal_phrase", metadata))
+    if span[1] < len(text):
+        specs.extend(_main_clause_specs(text, [span[1], len(text)], None))
+    return _clean_specs(text, specs)
 
 
 def _logical_clause_specs(text: str) -> List[tuple]:
@@ -506,7 +580,12 @@ def _looks_like_atomic_condition(chunk_text: str) -> bool:
 
 
 def _confidence_for_chunk_type(chunk_type: str) -> float:
-    if chunk_type in {"explicit_signal_definition", "duration_constraint"}:
+    if chunk_type in {
+        "explicit_signal_definition",
+        "duration_constraint",
+        "phase_timing_constraint",
+        "temporal_context_constraint",
+    }:
         return 0.9
     if chunk_type == "natural_language_event":
         return 0.6
@@ -541,16 +620,20 @@ def _clean_condition_text(text: str) -> str:
 
 def _clean_specs(
     text: str,
-    specs: Sequence[tuple[list[int], str, str]],
-) -> List[tuple[list[int], str, str]]:
+    specs: Sequence[tuple],
+) -> List[tuple]:
     cleaned_specs = []
-    for span, chunk_type, source in specs:
+    for spec in specs:
+        span, chunk_type, source, metadata = _normalize_spec(spec)
         if span[0] >= span[1]:
             continue
         chunk_text = _clean_chunk_text(text[span[0] : span[1]])
         if not chunk_text or _is_trivial_punctuation_chunk(chunk_text):
             continue
-        cleaned_specs.append((span, chunk_type, source))
+        if metadata:
+            cleaned_specs.append((span, chunk_type, source, metadata))
+        else:
+            cleaned_specs.append((span, chunk_type, source))
     return cleaned_specs
 
 
@@ -577,6 +660,48 @@ def _is_top_level_span(text: str, span: Sequence[int]) -> bool:
             bracket_depth -= 1
         index += 1
     return quote is None and paren_depth == 0 and bracket_depth == 0
+
+
+def _phase_timing_constraint_from_match(match: re.Match[str]) -> JsonDict:
+    marker = re.sub(r"\s+", " ", match.group("marker").lower())
+    timing_relation = "before_phase" if marker in {"before", "prior to", "ahead of"} else "after_phase"
+    return {
+        "chunk_type": "phase_timing_constraint",
+        "text": match.group(0),
+        "span": [match.start(), match.end()],
+        "source": "temporal_phrase",
+        "timing_relation": timing_relation,
+        "phase": _normalize_temporal_value(match.group("phase")),
+    }
+
+
+def _temporal_context_constraint_from_match(match: re.Match[str]) -> JsonDict:
+    relative = match.group("relative")
+    context = match.group("braced_context") or match.group("context")
+    return {
+        "chunk_type": "temporal_context_constraint",
+        "text": match.group(0),
+        "span": [match.start(), match.end()],
+        "source": "temporal_phrase",
+        "timing_relation": "during_context",
+        "context": _normalize_temporal_value(context),
+        "relative_time": _normalize_relative_time(relative),
+    }
+
+
+def _normalize_temporal_value(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().strip("{}")).lower()
+
+
+def _normalize_relative_time(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.lower()
+    if normalized in {"previous", "last", "prior"}:
+        return "previous"
+    if normalized in {"current", "present"}:
+        return "current"
+    return normalized
 
 
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:

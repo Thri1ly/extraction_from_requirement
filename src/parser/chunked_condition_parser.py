@@ -1,7 +1,13 @@
 import re
 from typing import Sequence
 
-from src.parser.condition_semantic_chunker import DURATION_NOUN_PATTERN, TIME_VALUE_PATTERN, chunk_condition_sentence
+from src.parser.condition_semantic_chunker import (
+    DURATION_NOUN_PATTERN,
+    TIME_VALUE_PATTERN,
+    chunk_condition_sentence,
+    extract_phase_timing_constraint,
+    extract_temporal_context_constraint,
+)
 from src.schemas import JsonDict, number_value
 
 
@@ -127,9 +133,48 @@ def extract_duration_value(text: str) -> JsonDict:
     return {"duration": raw_value, "value": None, "unit": None}
 
 
+def parse_phase_timing_constraint(text: str) -> JsonDict:
+    parsed = extract_phase_timing_constraint(text)
+    if not parsed:
+        return {
+            "condition_type": "phase_timing_constraint",
+            "raw_text": text,
+            "need_review": True,
+            "confidence": 0.3,
+        }
+    return {
+        "condition_type": "phase_timing_constraint",
+        "timing_relation": parsed["timing_relation"],
+        "phase": parsed["phase"],
+        "confidence": 0.9,
+    }
+
+
+def parse_temporal_context_constraint(text: str) -> JsonDict:
+    parsed = extract_temporal_context_constraint(text)
+    if not parsed:
+        return {
+            "condition_type": "temporal_context_constraint",
+            "raw_text": text,
+            "need_review": True,
+            "confidence": 0.3,
+        }
+    return {
+        "condition_type": "temporal_context_constraint",
+        "timing_relation": "during_context",
+        "context": parsed["context"],
+        "relative_time": parsed.get("relative_time"),
+        "confidence": 0.9,
+    }
+
+
 def _parse_chunk(chunk: JsonDict, atomic_parser: str) -> JsonDict:
     if chunk.get("chunk_type") == "duration_constraint":
         parse_result = parse_duration_constraint(str(chunk.get("text", "")))
+    elif chunk.get("chunk_type") == "phase_timing_constraint":
+        parse_result = parse_phase_timing_constraint(str(chunk.get("text", "")))
+    elif chunk.get("chunk_type") == "temporal_context_constraint":
+        parse_result = parse_temporal_context_constraint(str(chunk.get("text", "")))
     else:
         try:
             parse_result = parse_atomic_chunk(

@@ -319,6 +319,49 @@ def test_chunk_condition_sentence_does_not_split_protected_top_level_connectors(
         assert result["chunks"][0]["text"] == text
 
 
+def test_chunk_condition_sentence_splits_phase_timing_constraint():
+    result = chunk_condition_sentence("both steer angle request are timeout before activation", normalized_entities=[])
+
+    assert [chunk["chunk_type"] for chunk in result["chunks"]] == [
+        "natural_language_condition",
+        "phase_timing_constraint",
+    ]
+    assert result["chunks"][1]["text"] == "before activation"
+    assert result["chunks"][1]["source"] == "temporal_phrase"
+    assert result["chunks"][1]["timing_relation"] == "before_phase"
+    assert result["chunks"][1]["phase"] == "activation"
+
+
+def test_chunk_condition_sentence_splits_temporal_context_constraint():
+    result = chunk_condition_sentence("an ASP check failure is detected during a {journey}", normalized_entities=[])
+
+    assert [chunk["chunk_type"] for chunk in result["chunks"]] == [
+        "natural_language_condition",
+        "temporal_context_constraint",
+    ]
+    assert result["chunks"][1]["text"] == "during a {journey}"
+    assert result["chunks"][1]["timing_relation"] == "during_context"
+    assert result["chunks"][1]["context"] == "journey"
+
+
+def test_chunk_condition_sentence_splits_previous_temporal_context_constraint():
+    result = chunk_condition_sentence("ASP check failure has been detected during the previous {journey}", normalized_entities=[])
+
+    assert result["chunks"][1]["chunk_type"] == "temporal_context_constraint"
+    assert result["chunks"][1]["text"] == "during the previous {journey}"
+    assert result["chunks"][1]["context"] == "journey"
+    assert result["chunks"][1]["relative_time"] == "previous"
+
+
+def test_chunk_condition_sentence_does_not_split_source_from_phrase():
+    text = "steer angle signal requests to exit from CAN1"
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["text"] == text
+    assert result["chunks"][0]["chunk_type"] != "temporal_context_constraint"
+
+
 def test_find_balanced_square_bracket_span_returns_outer_span_or_none():
     text = "prefix[(S_A is equal to normal) AND (S_B is greater than 'static limit')] suffix"
 
