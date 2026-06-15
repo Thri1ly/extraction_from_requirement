@@ -2,21 +2,24 @@
 
 ## Summary
 
-- Total records: 6
-- Parsed records: 6
+- Total records: 9
+- Parsed records: 9
 - Skipped records: 0
 - Error records: 0
-- Total chunks: 10
+- Total chunks: 13
 - Chunk type distribution:
-  - atomic_condition: 2
+  - atomic_condition: 4
   - bracketed_condition_group: 1
   - duration_constraint: 2
   - explicit_signal_definition: 1
-  - natural_language_condition: 3
+  - natural_language_condition: 4
   - quantified_parenthesized_member_group: 1
 - Atomic parse type distribution:
   - bracketed_condition_group: 1
   - duration_constraint: 2
+  - entity_property_state_condition: 1
+  - entity_property_threshold_condition: 1
+  - multi_entity_property_threshold_condition: 1
   - quantified_member_expression_group: 1
   - unknown: 6
 
@@ -539,6 +542,236 @@ Parse Result:
   "type": "unparsed_condition",
   "mention": "S_VEHICLE_SPEED is valid",
   "need_review": true
+}
+```
+
+### 7. C007
+
+Original Condition:
+
+```text
+ADAS signals on lane1 is valid
+```
+
+Entities Source: normalized_entities
+
+Normalization Applied: false
+
+Dictionary Loaded: true
+
+Chunks Overview:
+
+| # | chunk_type | chunk_text | parse_type | need_review |
+|---|------------|------------|------------|-------------|
+| 1 | natural_language_condition | ADAS signals on lane1 is valid | entity_property_state_condition | false |
+
+#### Chunk 1 Parse Result
+
+Chunk Text:
+
+```text
+ADAS signals on lane1 is valid
+```
+
+Chunk Entities:
+
+```json
+[
+  {
+    "mention": "ADAS",
+    "type": "COMPONENT",
+    "canonical_name": "ADAS"
+  },
+  {
+    "mention": "signals",
+    "type": "FEATURE",
+    "canonical_name": "signals"
+  },
+  {
+    "mention": "lane1",
+    "type": "COMPONENT",
+    "canonical_name": "lane1"
+  },
+  {
+    "mention": "valid",
+    "type": "STATE",
+    "canonical_name": "valid"
+  }
+]
+```
+
+Parse Result:
+
+```json
+{
+  "type": "entity_property_state_condition",
+  "condition_type": "entity_property_state_condition",
+  "entity": "ADAS",
+  "entity_mention": "ADAS",
+  "property": "signals",
+  "property_mention": "signals",
+  "context_relation": "on",
+  "context": "lane1",
+  "context_mention": "lane1",
+  "state": "valid",
+  "state_mention": "valid",
+  "operator": "=",
+  "polarity": "positive",
+  "source": "entity_property_state_rule",
+  "confidence": 0.88,
+  "parser": "syntactic",
+  "need_review": false
+}
+```
+
+### 8. C008
+
+Original Condition:
+
+```text
+resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT
+```
+
+Entities Source: normalized_entities
+
+Normalization Applied: false
+
+Dictionary Loaded: true
+
+Chunks Overview:
+
+| # | chunk_type | chunk_text | parse_type | need_review |
+|---|------------|------------|------------|-------------|
+| 1 | atomic_condition | resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT | entity_property_threshold_condition | false |
+
+#### Chunk 1 Parse Result
+
+Chunk Text:
+
+```text
+resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT
+```
+
+Chunk Entities:
+
+```json
+[
+  {
+    "mention": "resolution",
+    "type": "FEATURE",
+    "canonical_name": "resolution"
+  },
+  {
+    "mention": "S_CAMERA_SIGNAL",
+    "type": "SIGNAL",
+    "canonical_name": "S_CAMERA_SIGNAL"
+  },
+  {
+    "mention": "P_RESOLUTION_LIMIT",
+    "type": "PARAMETER",
+    "canonical_name": "P_RESOLUTION_LIMIT"
+  }
+]
+```
+
+Parse Result:
+
+```json
+{
+  "type": "entity_property_threshold_condition",
+  "condition_type": "entity_property_threshold_condition",
+  "entity": "S_CAMERA_SIGNAL",
+  "entity_mention": "S_CAMERA_SIGNAL",
+  "property": "resolution",
+  "property_mention": "resolution",
+  "property_relation": "of",
+  "operator": ">",
+  "source": "entity_property_threshold_rule",
+  "confidence": 0.9,
+  "parser": "syntactic",
+  "need_review": false,
+  "parameter": "P_RESOLUTION_LIMIT"
+}
+```
+
+### 9. C009
+
+Original Condition:
+
+```text
+S_SIGNAL1 and S_SIGNAL2 deviation are greater than P_LIMIT
+```
+
+Entities Source: normalized_entities
+
+Normalization Applied: false
+
+Dictionary Loaded: true
+
+Chunks Overview:
+
+| # | chunk_type | chunk_text | parse_type | need_review |
+|---|------------|------------|------------|-------------|
+| 1 | atomic_condition | S_SIGNAL1 and S_SIGNAL2 deviation are greater than P_LIMIT | multi_entity_property_threshold_condition | false |
+
+#### Chunk 1 Parse Result
+
+Chunk Text:
+
+```text
+S_SIGNAL1 and S_SIGNAL2 deviation are greater than P_LIMIT
+```
+
+Chunk Entities:
+
+```json
+[
+  {
+    "mention": "S_SIGNAL1",
+    "type": "SIGNAL",
+    "canonical_name": "S_SIGNAL1"
+  },
+  {
+    "mention": "S_SIGNAL2",
+    "type": "SIGNAL",
+    "canonical_name": "S_SIGNAL2"
+  },
+  {
+    "mention": "deviation",
+    "type": "FEATURE",
+    "canonical_name": "deviation"
+  },
+  {
+    "mention": "P_LIMIT",
+    "type": "PARAMETER",
+    "canonical_name": "P_LIMIT"
+  }
+]
+```
+
+Parse Result:
+
+```json
+{
+  "type": "multi_entity_property_threshold_condition",
+  "condition_type": "multi_entity_property_threshold_condition",
+  "entities": [
+    "S_SIGNAL1",
+    "S_SIGNAL2"
+  ],
+  "entity_mentions": [
+    "S_SIGNAL1",
+    "S_SIGNAL2"
+  ],
+  "property": "deviation",
+  "property_mention": "deviation",
+  "operator": ">",
+  "logic": "AND",
+  "source": "multi_entity_property_threshold_rule",
+  "confidence": 0.9,
+  "parser": "syntactic",
+  "need_review": false,
+  "parameter": "P_LIMIT"
 }
 ```
 

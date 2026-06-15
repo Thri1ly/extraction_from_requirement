@@ -12,7 +12,7 @@ from src.parser.atomic_condition_parser import (
 from src.schemas import JsonDict, number_value
 
 
-SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT", "FEATURE"}
+SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT", "FEATURE", "PROPERTY"}
 RELATION_PATTERN = re.compile(
     r"\b(?:is|are|be|shall\s+be|should\s+be|must\s+be|become|becomes|remain|remains)\b",
     flags=re.IGNORECASE,
@@ -60,10 +60,13 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions: List[JsonDict] = []
     conditions.extend(_parse_fault_in_component_condition(text, placeholder_text, faults, components, placeholder_map))
     conditions.extend(_parse_quantified_component_member_state(text, placeholder_text, components, right_entities, placeholder_map))
+    conditions.extend(parse_multi_entity_property_threshold_condition(placeholder_text, placeholder_map, original_text=text))
+    conditions.extend(_parse_entity_property_state_condition(text, placeholder_text, placeholder_map))
     conditions.extend(_parse_component_state_condition(text, placeholder_text, components, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_feature_component_state_condition(text, placeholder_text, features + signals, components, right_entities, placeholder_map))
+    conditions.extend(parse_property_of_entity_threshold_condition(placeholder_text, placeholder_map, original_text=text))
     conditions.extend(_parse_bracketed_range_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_signal_value_state_clause_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_quantified_signal_member_right(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -205,6 +208,161 @@ def _parse_component_state_condition(
         return []
     condition["parser"] = "syntactic"
     return [condition]
+
+
+def _parse_entity_property_state_condition(
+    original_text: str,
+    placeholder_text: str,
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    state_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() == "STATE"
+    ]
+    if len(state_placeholders) != 1:
+        return []
+
+    entity_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"COMPONENT", "SIGNAL"}
+    ]
+    property_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"FEATURE", "PROPERTY", "SIGNAL"}
+    ]
+    if not entity_placeholders:
+        return []
+
+    state_placeholder = state_placeholders[0]
+    predicate_pattern = (
+        rf"(?:{RELATION_PATTERN.pattern}\s+(?:not\s+)?equal\s+to|"
+        rf"{RELATION_PATTERN.pattern}\s+(?:!=|==|=)|"
+        rf"{RELATION_PATTERN.pattern}|"
+        r"(?:not\s+)?equal\s+to|!=|==|=)"
+    )
+
+    for entity_placeholder in _ordered_placeholders(placeholder_text, entity_placeholders):
+        candidate_properties = [placeholder for placeholder in property_placeholders if placeholder != entity_placeholder]
+        property_pattern = _placeholder_or_raw_pattern(candidate_properties)
+        context_placeholders = [
+            placeholder
+            for placeholder in entity_placeholders
+            if placeholder not in {entity_placeholder, state_placeholder}
+        ]
+        context_pattern = _placeholder_or_raw_pattern(context_placeholders)
+        match = re.search(
+            rf"\b(?:the\s+|a\s+|an\s+)?{re.escape(entity_placeholder)}\s+"
+            rf"(?P<property>{property_pattern})\s+"
+            rf"(?P<context_relation>on|in|of)\s+"
+            rf"(?P<context>{context_pattern})\s+"
+            rf"(?P<predicate>{predicate_pattern})\s+{re.escape(state_placeholder)}\b",
+            placeholder_text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            match = re.search(
+                rf"\b(?:the\s+|a\s+|an\s+)?{re.escape(entity_placeholder)}\s+"
+                rf"(?P<property>{property_pattern})\s+"
+                rf"(?P<predicate>{predicate_pattern})\s+{re.escape(state_placeholder)}\b",
+                placeholder_text,
+                flags=re.IGNORECASE,
+            )
+        if not match:
+            continue
+
+        entity = placeholder_map[entity_placeholder]["entity"]
+        state = placeholder_map[state_placeholder]["entity"]
+        property_token = match.group("property")
+        if property_token not in placeholder_map and _is_invalid_raw_property_token(property_token):
+            continue
+        property_value, property_mention, property_need_review = _placeholder_or_raw_value(
+            original_text,
+            property_token,
+            placeholder_map,
+        )
+        context_relation = match.groupdict().get("context_relation")
+        context_value = None
+        context_mention = None
+        context_need_review = False
+        if context_relation:
+            context_value, context_mention, context_need_review = _placeholder_or_raw_value(
+                original_text,
+                match.group("context"),
+                placeholder_map,
+            )
+
+        operator = _operator_from_text(match.group("predicate")) or "=="
+        polarity = "negative" if operator == "!=" else "positive"
+        if operator == "==":
+            operator = "="
+
+        return [
+            {
+                "type": "entity_property_state_condition",
+                "condition_type": "entity_property_state_condition",
+                "entity": str(entity.get("canonical_name") or entity.get("mention")),
+                "entity_mention": _display_entity_mention(original_text, entity),
+                "property": property_value,
+                "property_mention": property_mention,
+                "context_relation": context_relation.lower() if context_relation else None,
+                "context": context_value,
+                "context_mention": context_mention,
+                "state": str(state.get("canonical_name") or state.get("mention")),
+                "state_mention": _display_entity_mention(original_text, state),
+                "operator": operator,
+                "polarity": polarity,
+                "source": "entity_property_state_rule",
+                "confidence": 0.88,
+                "parser": "syntactic",
+                "need_review": property_need_review or context_need_review,
+            }
+        ]
+
+    return []
+
+
+def _is_predicate_like_raw_property(token: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(token or "").strip().lower())
+    if not normalized:
+        return True
+    return normalized in {
+        "is",
+        "are",
+        "be",
+        "shall",
+        "shall be",
+        "should",
+        "should be",
+        "must",
+        "must be",
+        "become",
+        "becomes",
+        "remain",
+        "remains",
+        "equal",
+        "equals",
+        "equal to",
+        "not equal",
+        "not equal to",
+    }
+
+
+def _is_invalid_raw_property_token(token: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(token or "").strip().lower())
+    if _is_predicate_like_raw_property(normalized):
+        return True
+    if re.search(r"\b(?:signal|component|state|value|parameter|feature|property)_\d+\b", normalized, flags=re.IGNORECASE):
+        return True
+    if re.match(r"\b(?:and|or|but|in|on|of)\b", normalized):
+        return True
+    if re.match(r"\b(?:(?:at\s*least|atleast)\s+)?one\b", normalized):
+        return True
+    if normalized.startswith(("both ", "all ", "absolute value")):
+        return True
+    return False
 
 
 def _parse_parenthesized_signal_state_with_predicate(
@@ -419,6 +577,220 @@ def _parse_feature_component_state_condition(
             "need_review": feature_need_review,
         }
     ]
+
+
+def parse_property_of_entity_threshold_condition(
+    placeholder_text: str,
+    placeholder_map: JsonDict,
+    original_text: str | None = None,
+) -> List[JsonDict]:
+    original_text = original_text or placeholder_text
+    right_placeholders = _right_relation_entities(placeholder_map)
+    if len(right_placeholders) != 1:
+        return []
+
+    entity_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"SIGNAL", "COMPONENT"}
+    ]
+    if len(entity_placeholders) != 1:
+        return []
+
+    property_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"FEATURE", "PROPERTY"}
+    ]
+    property_pattern = _property_placeholder_or_word_pattern(property_placeholders)
+    entity_placeholder = entity_placeholders[0]
+    right_placeholder = right_placeholders[0]
+    predicate_pattern = r"(?:[A-Za-z]+(?:\s+[A-Za-z/]+)*|!=|==|=|>=|<=|>|<)"
+    match = re.search(
+        rf"\b(?:the\s+|a\s+|an\s+)?(?P<property>{property_pattern})\s+"
+        rf"(?P<property_relation>of)\s+{re.escape(entity_placeholder)}\s+"
+        rf"(?P<predicate>{predicate_pattern})\s+{re.escape(right_placeholder)}\b",
+        placeholder_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+
+    property_token = match.group("property")
+    if property_token not in placeholder_map and _is_invalid_raw_property_token(property_token):
+        return []
+
+    operator = _operator_from_text(match.group("predicate")) or "=="
+    if operator == "==":
+        output_operator = "="
+    else:
+        output_operator = operator
+
+    entity = placeholder_map[entity_placeholder]["entity"]
+    right_entity = placeholder_map[right_placeholder]["entity"]
+    property_value, property_mention, property_need_review = _placeholder_or_raw_value(
+        original_text,
+        property_token,
+        placeholder_map,
+    )
+    if property_token not in placeholder_map and _is_known_property_word(property_token):
+        property_value = _normalize_raw_property_value(property_token)
+        property_need_review = False
+    condition = {
+        "type": "entity_property_threshold_condition",
+        "condition_type": "entity_property_threshold_condition",
+        "entity": str(entity.get("canonical_name") or entity.get("mention")),
+        "entity_mention": _display_entity_mention(original_text, entity),
+        "property": property_value,
+        "property_mention": property_mention,
+        "property_relation": match.group("property_relation").lower(),
+        "operator": output_operator,
+        "source": "entity_property_threshold_rule",
+        "confidence": 0.9,
+        "parser": "syntactic",
+        "need_review": property_need_review,
+    }
+
+    right_type = str(right_entity.get("type", "")).upper()
+    if right_type == "PARAMETER":
+        condition["parameter"] = str(right_entity.get("canonical_name") or right_entity.get("mention"))
+        return [condition]
+    if right_type == "VALUE":
+        parsed_value = _value_from_entity(right_entity)
+        if parsed_value is None:
+            condition["need_review"] = True
+            condition["review_reason"] = "value was not parsed"
+            condition["raw_value"] = str(right_entity.get("mention") or right_entity.get("canonical_name") or "")
+            return [condition]
+        condition["value"] = parsed_value["value"]
+        condition["unit"] = parsed_value["unit"]
+        return [condition]
+    if right_type == "STATE":
+        condition["type"] = "entity_property_state_condition"
+        condition["condition_type"] = "entity_property_state_condition"
+        condition["state"] = str(right_entity.get("canonical_name") or right_entity.get("mention"))
+        condition["state_mention"] = _display_entity_mention(original_text, right_entity)
+        condition["polarity"] = "negative" if output_operator == "!=" else "positive"
+        return [condition]
+
+    return []
+
+
+def parse_multi_entity_property_threshold_condition(
+    placeholder_text: str,
+    placeholder_map: JsonDict,
+    original_text: str | None = None,
+) -> List[JsonDict]:
+    original_text = original_text or placeholder_text
+    right_placeholders = _right_relation_entities(placeholder_map)
+    if len(right_placeholders) != 1:
+        return []
+
+    entity_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"SIGNAL", "COMPONENT"}
+    ]
+    if len(entity_placeholders) != 2:
+        return []
+
+    ordered_entities = _ordered_placeholders(placeholder_text, entity_placeholders)
+    logic = _placeholder_list_logic(placeholder_text, ordered_entities)
+    if not logic:
+        return []
+
+    property_placeholders = [
+        placeholder
+        for placeholder, payload in placeholder_map.items()
+        if str(payload["entity"].get("type", "")).upper() in {"FEATURE", "PROPERTY"}
+    ]
+    property_pattern = _property_placeholder_or_word_pattern(property_placeholders)
+    right_placeholder = right_placeholders[0]
+    predicate_pattern = r"(?:[A-Za-z]+(?:\s+[A-Za-z/]+)*|!=|==|=|>=|<=|>|<)"
+
+    match = re.search(
+        rf"\b{re.escape(ordered_entities[0])}\s+(?:and|or)\s+{re.escape(ordered_entities[1])}\s+"
+        rf"(?P<property>{property_pattern})\s+"
+        rf"(?P<predicate>{predicate_pattern})\s+{re.escape(right_placeholder)}\b",
+        placeholder_text,
+        flags=re.IGNORECASE,
+    )
+    property_relation = None
+    if not match:
+        match = re.search(
+            rf"\b(?:the\s+|a\s+|an\s+)?(?P<property>{property_pattern})\s+"
+            rf"(?P<property_relation>of)\s+{re.escape(ordered_entities[0])}\s+"
+            rf"(?:and|or)\s+{re.escape(ordered_entities[1])}\s+"
+            rf"(?P<predicate>{predicate_pattern})\s+{re.escape(right_placeholder)}\b",
+            placeholder_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            property_relation = match.group("property_relation").lower()
+    if not match:
+        return []
+
+    property_token = match.group("property")
+    if property_token not in placeholder_map and _is_invalid_raw_property_token(property_token):
+        return []
+
+    operator = _operator_from_text(match.group("predicate")) or "=="
+    if operator == "==":
+        operator = "="
+
+    property_value, property_mention, property_need_review = _placeholder_or_raw_value(
+        original_text,
+        property_token,
+        placeholder_map,
+    )
+    if property_token not in placeholder_map and _is_known_property_word(property_token):
+        property_value = _normalize_raw_property_value(property_token)
+        property_need_review = False
+    condition = {
+        "type": "multi_entity_property_threshold_condition",
+        "condition_type": "multi_entity_property_threshold_condition",
+        "entities": [
+            str(placeholder_map[entity_placeholder]["entity"].get("canonical_name") or placeholder_map[entity_placeholder]["entity"].get("mention"))
+            for entity_placeholder in ordered_entities
+        ],
+        "entity_mentions": [
+            _display_entity_mention(original_text, placeholder_map[entity_placeholder]["entity"])
+            for entity_placeholder in ordered_entities
+        ],
+        "property": property_value,
+        "property_mention": property_mention,
+        "operator": operator,
+        "logic": logic,
+        "source": "multi_entity_property_threshold_rule",
+        "confidence": 0.9,
+        "parser": "syntactic",
+        "need_review": property_need_review,
+    }
+    if property_relation:
+        condition["property_relation"] = property_relation
+
+    right_entity = placeholder_map[right_placeholder]["entity"]
+    right_type = str(right_entity.get("type", "")).upper()
+    if right_type == "PARAMETER":
+        condition["parameter"] = str(right_entity.get("canonical_name") or right_entity.get("mention"))
+        return [condition]
+    if right_type == "VALUE":
+        parsed_value = _value_from_entity(right_entity)
+        if parsed_value is None:
+            condition["need_review"] = True
+            condition["review_reason"] = "value was not parsed"
+            condition["raw_value"] = str(right_entity.get("mention") or right_entity.get("canonical_name") or "")
+            return [condition]
+        condition["value"] = parsed_value["value"]
+        condition["unit"] = parsed_value["unit"]
+        return [condition]
+    if right_type == "STATE":
+        condition["state"] = str(right_entity.get("canonical_name") or right_entity.get("mention"))
+        condition["state_mention"] = _display_entity_mention(original_text, right_entity)
+        condition["polarity"] = "negative" if operator == "!=" else "positive"
+        return [condition]
+
+    return []
 
 
 def _parse_bracketed_range_condition(
@@ -1024,6 +1396,60 @@ def _ordered_placeholders(text: str, placeholders: List[str]) -> List[str]:
     return sorted(placeholders, key=lambda placeholder: text.find(placeholder))
 
 
+def _placeholder_or_raw_pattern(placeholders: List[str]) -> str:
+    raw_pattern = r"[A-Za-z][A-Za-z0-9_ -]*?"
+    if not placeholders:
+        return raw_pattern
+    placeholder_pattern = "|".join(re.escape(placeholder) for placeholder in sorted(placeholders, key=len, reverse=True))
+    return rf"(?:{placeholder_pattern}|{raw_pattern})"
+
+
+def _property_placeholder_or_word_pattern(placeholders: List[str]) -> str:
+    property_words = _known_property_words()
+    word_pattern = "|".join(re.escape(word) for word in property_words)
+    if not placeholders:
+        return rf"(?:{word_pattern})"
+    placeholder_pattern = "|".join(re.escape(placeholder) for placeholder in sorted(placeholders, key=len, reverse=True))
+    return rf"(?:{placeholder_pattern}|{word_pattern})"
+
+
+def _known_property_words() -> List[str]:
+    return [
+        "availability",
+        "deviations",
+        "deviation",
+        "resolution",
+        "validity",
+        "quality",
+        "status",
+        "accuracy",
+    ]
+
+
+def _is_known_property_word(token: str) -> bool:
+    return str(token or "").strip().lower() in set(_known_property_words())
+
+
+def _normalize_raw_property_value(token: str) -> str:
+    normalized = str(token or "").strip()
+    if normalized.lower() == "deviations":
+        return "deviation"
+    return normalized
+
+
+def _placeholder_or_raw_value(
+    original_text: str,
+    token: str,
+    placeholder_map: JsonDict,
+) -> tuple[str, str, bool]:
+    token = str(token or "").strip()
+    if token in placeholder_map:
+        entity = placeholder_map[token]["entity"]
+        value = str(entity.get("canonical_name") or entity.get("mention"))
+        return value, _display_entity_mention(original_text, entity), False
+    return token, token, True
+
+
 def _placeholder_list_logic(text: str, placeholders: List[str]) -> str | None:
     if len(placeholders) < 2:
         return None
@@ -1226,6 +1652,9 @@ def _value_from_entity(entity: JsonDict) -> JsonDict | None:
         value_unit = re.fullmatch(VALUE_UNIT_PATTERN, raw_value, flags=re.IGNORECASE)
         if value_unit:
             return {"value": number_value(value_unit.group("value")), "unit": value_unit.group("unit")}
+        generic_value_unit = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([A-Za-z][A-Za-z0-9_/-]*)", raw_value)
+        if generic_value_unit:
+            return {"value": number_value(generic_value_unit.group(1)), "unit": generic_value_unit.group(2)}
         if re.fullmatch(r"\d+(?:\.\d+)?", raw_value):
             return {"value": number_value(raw_value), "unit": entity.get("unit")}
     return None

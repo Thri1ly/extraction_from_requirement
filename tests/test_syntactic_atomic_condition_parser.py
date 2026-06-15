@@ -900,6 +900,402 @@ def test_syntactic_parser_parses_symbolic_negative_feature_component_state_condi
     assert parsed["polarity"] == "negative"
 
 
+def test_syntactic_parser_parses_entity_property_state_with_context():
+    parsed = parse_condition_line(
+        "ADAS signals on lane1 is valid",
+        normalized_entities=[
+            {"mention": "ADAS", "type": "COMPONENT", "canonical_name": "ADAS"},
+            {"mention": "signals", "type": "FEATURE", "canonical_name": "signals"},
+            {"mention": "lane1", "type": "COMPONENT", "canonical_name": "lane1"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "entity_property_state_condition",
+        "condition_type": "entity_property_state_condition",
+        "entity": "ADAS",
+        "entity_mention": "ADAS",
+        "property": "signals",
+        "property_mention": "signals",
+        "context_relation": "on",
+        "context": "lane1",
+        "context_mention": "lane1",
+        "state": "valid",
+        "state_mention": "valid",
+        "operator": "=",
+        "polarity": "positive",
+        "source": "entity_property_state_rule",
+        "confidence": 0.88,
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_entity_property_state_without_context():
+    parsed = parse_condition_line(
+        "ADAS signals are valid",
+        normalized_entities=[
+            {"mention": "ADAS", "type": "COMPONENT", "canonical_name": "ADAS"},
+            {"mention": "signals", "type": "FEATURE", "canonical_name": "signals"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_state_condition"
+    assert parsed["entity"] == "ADAS"
+    assert parsed["property"] == "signals"
+    assert parsed["context_relation"] is None
+    assert parsed["context"] is None
+    assert parsed["state"] == "valid"
+    assert parsed["operator"] == "="
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_negative_entity_property_state_with_context():
+    parsed = parse_condition_line(
+        "LDW request status in normal operation is not equal to Invalid",
+        normalized_entities=[
+            {"mention": "LDW request", "type": "COMPONENT", "canonical_name": "LDW_REQUEST"},
+            {"mention": "status", "type": "FEATURE", "canonical_name": "status"},
+            {"mention": "normal operation", "type": "COMPONENT", "canonical_name": "normal operation"},
+            {"mention": "Invalid", "type": "STATE", "canonical_name": "Invalid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_state_condition"
+    assert parsed["entity"] == "LDW_REQUEST"
+    assert parsed["property"] == "status"
+    assert parsed["context_relation"] == "in"
+    assert parsed["context"] == "normal operation"
+    assert parsed["state"] == "Invalid"
+    assert parsed["operator"] == "!="
+    assert parsed["polarity"] == "negative"
+
+
+def test_syntactic_parser_parses_property_of_entity_parameter_threshold():
+    parsed = parse_condition_line(
+        "resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT",
+        normalized_entities=[
+            {"mention": "resolution", "type": "FEATURE", "canonical_name": "resolution"},
+            {"mention": "S_CAMERA_SIGNAL", "type": "SIGNAL", "canonical_name": "S_CAMERA_SIGNAL"},
+            {"mention": "P_RESOLUTION_LIMIT", "type": "PARAMETER", "canonical_name": "P_RESOLUTION_LIMIT"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "entity_property_threshold_condition",
+        "condition_type": "entity_property_threshold_condition",
+        "entity": "S_CAMERA_SIGNAL",
+        "entity_mention": "S_CAMERA_SIGNAL",
+        "property": "resolution",
+        "property_mention": "resolution",
+        "property_relation": "of",
+        "operator": ">",
+        "parameter": "P_RESOLUTION_LIMIT",
+        "source": "entity_property_threshold_rule",
+        "confidence": 0.9,
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_property_of_entity_compound_operator_threshold():
+    parsed = parse_condition_line(
+        "resolution of camera signal is equal to or greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "resolution", "type": "FEATURE", "canonical_name": "resolution"},
+            {"mention": "camera signal", "type": "SIGNAL", "canonical_name": "S_CAMERA_SIGNAL"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_threshold_condition"
+    assert parsed["entity"] == "S_CAMERA_SIGNAL"
+    assert parsed["entity_mention"] == "camera signal"
+    assert parsed["property"] == "resolution"
+    assert parsed["operator"] == ">="
+    assert parsed["parameter"] == "P_LIMIT"
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_property_of_entity_value_threshold():
+    parsed = parse_condition_line(
+        "resolution of S_CAMERA_SIGNAL > 5 deg",
+        normalized_entities=[
+            {"mention": "resolution", "type": "FEATURE", "canonical_name": "resolution"},
+            {"mention": "S_CAMERA_SIGNAL", "type": "SIGNAL", "canonical_name": "S_CAMERA_SIGNAL"},
+            {"mention": "5 deg", "type": "VALUE", "canonical_name": "5", "unit": "deg"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_threshold_condition"
+    assert parsed["entity"] == "S_CAMERA_SIGNAL"
+    assert parsed["property"] == "resolution"
+    assert parsed["operator"] == ">"
+    assert parsed["value"] == 5
+    assert parsed["unit"] == "deg"
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_property_of_entity_state_comparison():
+    parsed = parse_condition_line(
+        "quality of S_SPEED_QF is equal to VALID",
+        normalized_entities=[
+            {"mention": "quality", "type": "FEATURE", "canonical_name": "quality"},
+            {"mention": "S_SPEED_QF", "type": "SIGNAL", "canonical_name": "S_SPEED_QF"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_state_condition"
+    assert parsed["entity"] == "S_SPEED_QF"
+    assert parsed["property"] == "quality"
+    assert parsed["property_relation"] == "of"
+    assert parsed["state"] == "VALID"
+    assert parsed["operator"] == "="
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_keeps_plain_signal_threshold_unchanged():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED > P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "parameter_threshold_condition"
+    assert parsed["signal"] == "S_VEHICLE_SPEED"
+    assert parsed["parameter"] == "P_LIMIT"
+    assert parsed["operator"] == ">"
+    assert "property" not in parsed
+
+
+def test_syntactic_parser_parses_entities_then_property_threshold():
+    parsed = parse_condition_line(
+        "SIGNAL1 and SIGNAL2 deviation are greater than PARAMETER",
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "deviation", "type": "FEATURE", "canonical_name": "deviation"},
+            {"mention": "PARAMETER", "type": "PARAMETER", "canonical_name": "PARAMETER"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["entities"] == ["SIGNAL1", "SIGNAL2"]
+    assert parsed["entity_mentions"] == ["SIGNAL1", "SIGNAL2"]
+    assert parsed["property"] == "deviation"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "PARAMETER"
+    assert parsed["logic"] == "AND"
+    assert parsed["source"] == "multi_entity_property_threshold_rule"
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_property_of_multi_entities_threshold():
+    parsed = parse_condition_line(
+        "deviation of SIGNAL1 and SIGNAL2 are greater than PARAMETER",
+        normalized_entities=[
+            {"mention": "deviation", "type": "FEATURE", "canonical_name": "deviation"},
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "PARAMETER", "type": "PARAMETER", "canonical_name": "PARAMETER"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["entities"] == ["SIGNAL1", "SIGNAL2"]
+    assert parsed["property"] == "deviation"
+    assert parsed["property_relation"] == "of"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "PARAMETER"
+    assert parsed["logic"] == "AND"
+
+
+def test_syntactic_parser_parses_property_of_multi_entities_state_comparison():
+    parsed = parse_condition_line(
+        "validity of SIGNAL1 and SIGNAL2 is equal to VALID",
+        normalized_entities=[
+            {"mention": "validity", "type": "FEATURE", "canonical_name": "validity"},
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["entities"] == ["SIGNAL1", "SIGNAL2"]
+    assert parsed["property"] == "validity"
+    assert parsed["property_relation"] == "of"
+    assert parsed["operator"] == "="
+    assert parsed["state"] == "VALID"
+    assert parsed["logic"] == "AND"
+
+
+def test_syntactic_parser_parses_entities_then_property_threshold_with_or():
+    parsed = parse_condition_line(
+        "SIGNAL1 or SIGNAL2 resolution is greater than PARAMETER",
+        normalized_entities=[
+            {"mention": "SIGNAL1", "type": "SIGNAL", "canonical_name": "SIGNAL1"},
+            {"mention": "SIGNAL2", "type": "SIGNAL", "canonical_name": "SIGNAL2"},
+            {"mention": "resolution", "type": "FEATURE", "canonical_name": "resolution"},
+            {"mention": "PARAMETER", "type": "PARAMETER", "canonical_name": "PARAMETER"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["logic"] == "OR"
+    assert parsed["property"] == "resolution"
+    assert parsed["parameter"] == "PARAMETER"
+
+
+def test_syntactic_parser_keeps_multi_signal_threshold_without_property_unchanged():
+    parsed = parse_condition_line(
+        "S_A and S_B are greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_A", "type": "SIGNAL", "canonical_name": "S_A"},
+            {"mention": "S_B", "type": "SIGNAL", "canonical_name": "S_B"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert [child["signal"] for child in parsed["children"]] == ["S_A", "S_B"]
+    assert all("property" not in child for child in parsed["children"])
+
+
+def test_entity_property_state_with_context():
+    parsed = parse_condition_line(
+        "ADAS signals on lane1 is valid",
+        normalized_entities=[
+            {"mention": "ADAS", "type": "COMPONENT", "canonical_name": "ADAS"},
+            {"mention": "signals", "type": "FEATURE", "canonical_name": "signals"},
+            {"mention": "lane1", "type": "COMPONENT", "canonical_name": "lane1"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_state_condition"
+    assert parsed["entity"] == "ADAS"
+    assert parsed["property"] == "signals"
+    assert parsed["context_relation"] == "on"
+    assert parsed["context"] == "lane1"
+    assert parsed["state"] == "valid"
+    assert parsed["operator"] == "="
+    assert parsed["need_review"] is False
+
+
+def test_property_of_signal_threshold():
+    parsed = parse_condition_line(
+        "resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT",
+        normalized_entities=[
+            {"mention": "resolution", "type": "FEATURE", "canonical_name": "resolution"},
+            {"mention": "S_CAMERA_SIGNAL", "type": "SIGNAL", "canonical_name": "S_CAMERA_SIGNAL"},
+            {"mention": "P_RESOLUTION_LIMIT", "type": "PARAMETER", "canonical_name": "P_RESOLUTION_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_threshold_condition"
+    assert parsed["entity"] == "S_CAMERA_SIGNAL"
+    assert parsed["property"] == "resolution"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "P_RESOLUTION_LIMIT"
+
+
+def test_property_of_signal_state():
+    parsed = parse_condition_line(
+        "quality of S_SPEED_QF is equal to VALID",
+        normalized_entities=[
+            {"mention": "quality", "type": "FEATURE", "canonical_name": "quality"},
+            {"mention": "S_SPEED_QF", "type": "SIGNAL", "canonical_name": "S_SPEED_QF"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] in {
+        "entity_property_state_condition",
+        "entity_property_threshold_condition",
+    }
+    assert parsed["entity"] == "S_SPEED_QF"
+    assert parsed["property"] == "quality"
+    assert parsed["state"] == "VALID"
+    assert parsed["operator"] == "="
+
+
+def test_multi_entities_then_property_threshold():
+    parsed = parse_condition_line(
+        "S_SIGNAL1 and S_SIGNAL2 deviation are greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_SIGNAL1", "type": "SIGNAL", "canonical_name": "S_SIGNAL1"},
+            {"mention": "S_SIGNAL2", "type": "SIGNAL", "canonical_name": "S_SIGNAL2"},
+            {"mention": "deviation", "type": "FEATURE", "canonical_name": "deviation"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["entities"] == ["S_SIGNAL1", "S_SIGNAL2"]
+    assert parsed["property"] == "deviation"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "P_LIMIT"
+    assert "children" not in parsed
+
+
+def test_property_of_multi_entities_threshold():
+    parsed = parse_condition_line(
+        "deviation of S_SIGNAL1 and S_SIGNAL2 are greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "deviation", "type": "FEATURE", "canonical_name": "deviation"},
+            {"mention": "S_SIGNAL1", "type": "SIGNAL", "canonical_name": "S_SIGNAL1"},
+            {"mention": "S_SIGNAL2", "type": "SIGNAL", "canonical_name": "S_SIGNAL2"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "multi_entity_property_threshold_condition"
+    assert parsed["entities"] == ["S_SIGNAL1", "S_SIGNAL2"]
+    assert parsed["property"] == "deviation"
+    assert parsed["property_relation"] == "of"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "P_LIMIT"
+
+
+def test_normal_signal_threshold_still_works():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED > P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "parameter_threshold_condition"
+    assert parsed["signal"] == "S_VEHICLE_SPEED"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "P_SPEED_LIMIT"
+    assert "property" not in parsed
+
+
+def test_normal_multiple_signal_threshold_still_works_without_property():
+    parsed = parse_condition_line(
+        "S_SIGNAL1 and S_SIGNAL2 are greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_SIGNAL1", "type": "SIGNAL", "canonical_name": "S_SIGNAL1"},
+            {"mention": "S_SIGNAL2", "type": "SIGNAL", "canonical_name": "S_SIGNAL2"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "condition_group"
+    assert parsed["logic"] == "AND"
+    assert [child["signal"] for child in parsed["children"]] == ["S_SIGNAL1", "S_SIGNAL2"]
+    assert all(child["type"] == "parameter_threshold_condition" for child in parsed["children"])
+    assert all("property" not in child for child in parsed["children"])
+
+
 def test_syntactic_parser_expands_quantified_component_members_state_condition():
     parsed = parse_condition_line(
         "one of the steering channels is Active",

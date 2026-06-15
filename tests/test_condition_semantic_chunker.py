@@ -373,6 +373,15 @@ def test_chunk_condition_sentence_does_not_split_protected_top_level_connectors(
         assert result["chunks"][0]["text"] == text
 
 
+def test_chunk_condition_sentence_does_not_split_multi_entity_property_threshold():
+    text = "S_SIGNAL1 and S_SIGNAL2 deviation are greater than P_LIMIT"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["text"] == text
+
+
 def test_chunk_condition_sentence_splits_phase_timing_constraint():
     result = chunk_condition_sentence("both steer angle request are timeout before activation", normalized_entities=[])
 

@@ -44,6 +44,7 @@ CONDITION_STATUS_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 TOP_LEVEL_CONNECTOR_PATTERN = re.compile(r"\b(and|or|but)\b", flags=re.IGNORECASE)
+PROPERTY_WORD_PATTERN = r"(?:availability|deviations?|resolution|validity|quality|status|accuracy)"
 SHARED_STATE_PATTERN = re.compile(
     r"\b(?:is|are)\s+(?P<state>valid|invalid|active|inactive|available|unavailable|degraded|enabled|disabled)\b",
     flags=re.IGNORECASE,
@@ -376,6 +377,11 @@ def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:
     if re.search(r"\b(?:at\s+least\s+)?one\s+of\b[^()]*$", left_normalized):
         return True
     if re.search(r"\bboth\b[^()]*$", left_normalized) and re.search(r"\b(?:is|are|valid|invalid|active|inactive|available|degraded)\b", right_normalized):
+        return True
+    if re.search(r"\b(?:s_[a-z0-9_]+|signal\d*|component\d*)\s*$", left_normalized) and re.match(
+        rf"\s*(?:s_[a-z0-9_]+|signal\d*|component\d*)\s+{PROPERTY_WORD_PATTERN}\s+",
+        right_normalized,
+    ):
         return True
     return False
 
