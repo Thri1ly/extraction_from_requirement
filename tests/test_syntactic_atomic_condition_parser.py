@@ -576,6 +576,95 @@ def test_syntactic_parser_prefers_explicit_parenthesized_signal_state_definition
     }
 
 
+def test_syntactic_parser_marks_absolute_value_threshold_transform():
+    parsed = parse_condition_line(
+        "the absolute value of S_COLUMN_TORQUE is greater than 5Nm",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "5Nm", "type": "VALUE", "canonical_name": "5Nm"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+    assert parsed["operator"] == ">"
+    assert parsed["value"] == 5
+    assert parsed["unit"] == "Nm"
+
+
+def test_syntactic_parser_marks_vertical_bar_absolute_threshold_transform():
+    parsed = parse_condition_line(
+        "|S_COLUMN_TORQUE| is greater than 5Nm",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "5Nm", "type": "VALUE", "canonical_name": "5Nm"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+
+
+def test_syntactic_parser_strips_braced_vertical_bar_absolute_signal():
+    parsed = parse_condition_line(
+        "|{S_COLUMN_TORQUE}| is greater than 5Nm",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "5Nm", "type": "VALUE", "canonical_name": "5Nm"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+
+
+def test_syntactic_parser_marks_abs_parameter_threshold_transform():
+    parsed = parse_condition_line(
+        "abs(S_COLUMN_TORQUE) is equal to or greater than P_LIMIT",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "parameter_threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+    assert parsed["operator"] == ">="
+    assert parsed["parameter"] == "P_LIMIT"
+
+
+def test_syntactic_parser_uses_canonical_signal_for_absolute_natural_mention():
+    parsed = parse_condition_line(
+        "the absolute value of Column Torque is greater than 5Nm",
+        normalized_entities=[
+            {"mention": "Column Torque", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "5Nm", "type": "VALUE", "canonical_name": "5Nm"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+
+
+def test_syntactic_parser_keeps_plain_threshold_without_transform():
+    parsed = parse_condition_line(
+        "S_COLUMN_TORQUE is greater than 5Nm",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "5Nm", "type": "VALUE", "canonical_name": "5Nm"},
+        ],
+    )
+
+    assert parsed["type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] is None
+
+
 def test_syntactic_parser_parses_predicateless_signal_state_condition():
     parsed = parse_condition_line(
         "S_COLUMN_TORQUE_QF invalid",

@@ -763,7 +763,11 @@ def _parse_single_signal_single_right(
 ) -> List[JsonDict]:
     if len(signals) != 1 or len(right_entities) != 1:
         return []
-    if not _has_relation_between(placeholder_text, signals[0], right_entities[0]):
+
+    transform = _transform_for_signal_placeholder(placeholder_text, signals[0])
+    if not _has_relation_between(placeholder_text, signals[0], right_entities[0]) and not (
+        transform and _has_operator_between(placeholder_text, signals[0], right_entities[0])
+    ):
         return []
 
     condition = _condition_for_right_entity(
@@ -774,6 +778,8 @@ def _parse_single_signal_single_right(
     )
     if not condition:
         return []
+    if transform:
+        condition["transform"] = transform
     condition["parser"] = "syntactic"
     return [condition]
 
@@ -977,6 +983,14 @@ def _has_relation_between(text: str, left_placeholder: str, right_placeholder: s
     return bool(RELATION_PATTERN.search(text[left_end:right_start]))
 
 
+def _has_operator_between(text: str, left_placeholder: str, right_placeholder: str) -> bool:
+    left_end = text.find(left_placeholder) + len(left_placeholder)
+    right_start = text.find(right_placeholder)
+    if right_start <= left_end:
+        return False
+    return _operator_from_text(text[left_end:right_start]) is not None
+
+
 def _has_component_state_relation_between(text: str, component_placeholder: str, state_placeholder: str) -> bool:
     component_end = text.find(component_placeholder) + len(component_placeholder)
     state_start = text.find(state_placeholder)
@@ -1032,6 +1046,22 @@ def _operator_from_text(text: str) -> str | None:
     for alias in aliases:
         if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, flags=re.IGNORECASE):
             return OPERATOR_ALIASES[alias]
+    return None
+
+
+def _transform_for_signal_placeholder(text: str, signal_placeholder: str) -> str | None:
+    """Return ABS when a signal placeholder is wrapped by an absolute-value expression."""
+
+    signal = re.escape(signal_placeholder)
+    abs_patterns = [
+        rf"\b(?:the\s+)?absolute\s+value\s+of\s+{signal}\b",
+        rf"\babsolute\s+{signal}\b",
+        rf"\babs\s*[\(\{{]\s*{signal}\s*[\)\}}]",
+        rf"\|\s*\{{?\s*{signal}\s*\}}?\s*\|",
+    ]
+    for pattern in abs_patterns:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return "ABS"
     return None
 
 
