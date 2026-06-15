@@ -170,7 +170,14 @@ Raw Chunk Result:
         "source": "temporal_phrase",
         "chunk_type": "duration_constraint"
       }
-    ]
+    ],
+    "text_preprocessing": {
+      "original_text": "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID) for a duration of P_LIMIT",
+      "cleaned_text": "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID) for a duration of P_LIMIT",
+      "changed": false,
+      "cleaning_actions": [],
+      "need_review": false
+    }
   }
 }
 ```
@@ -247,7 +254,14 @@ Raw Chunk Result:
         "source": "main_clause",
         "chunk_type": "atomic_condition"
       }
-    ]
+    ],
+    "text_preprocessing": {
+      "original_text": "S_VEHICLE_SPEED is valid",
+      "cleaned_text": "S_VEHICLE_SPEED is valid",
+      "changed": false,
+      "cleaning_actions": [],
+      "need_review": false
+    }
   }
 }
 ```
@@ -314,7 +328,14 @@ Raw Chunk Result:
         "source": "main_clause",
         "chunk_type": "natural_language_condition"
       }
-    ]
+    ],
+    "text_preprocessing": {
+      "original_text": "vehicle speed is in range of 50kph and 100kph",
+      "cleaned_text": "vehicle speed is in range of 50kph and 100kph",
+      "changed": false,
+      "cleaning_actions": [],
+      "need_review": false
+    }
   }
 }
 ```
@@ -391,7 +412,14 @@ Raw Chunk Result:
         "source": "main_clause",
         "chunk_type": "natural_language_condition"
       }
-    ]
+    ],
+    "text_preprocessing": {
+      "original_text": "the rack is moving to the right end stop",
+      "cleaned_text": "the rack is moving to the right end stop",
+      "changed": false,
+      "cleaning_actions": [],
+      "need_review": false
+    }
   }
 }
 ```
@@ -476,7 +504,14 @@ Raw Chunk Result:
         "source": "main_clause",
         "chunk_type": "natural_language_condition"
       }
-    ]
+    ],
+    "text_preprocessing": {
+      "original_text": "both vehicle speed signals are valid",
+      "cleaned_text": "both vehicle speed signals are valid",
+      "changed": false,
+      "cleaning_actions": [],
+      "need_review": false
+    }
   }
 }
 ```

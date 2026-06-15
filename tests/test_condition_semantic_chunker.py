@@ -1,5 +1,6 @@
 import json
 
+from src.parser.condition_text_preprocessor import clean_condition_text
 from src.parser.condition_semantic_chunker import (
     assign_entities_to_chunks,
     chunk_condition_sentence,
@@ -7,6 +8,70 @@ from src.parser.condition_semantic_chunker import (
     split_bracket_group_sub_chunks,
     split_square_bracket_condition_group,
 )
+
+
+def test_clean_condition_text_removes_unmatched_outer_parentheses_and_brackets():
+    examples = [
+        (
+            "(S_A is valid AND S_B is invalid",
+            "S_A is valid AND S_B is invalid",
+            "remove_unmatched_opening_parenthesis",
+            "(",
+        ),
+        (
+            "S_A is valid AND S_B is invalid)",
+            "S_A is valid AND S_B is invalid",
+            "remove_unmatched_closing_parenthesis",
+            ")",
+        ),
+        ("[S_A is valid", "S_A is valid", "remove_unmatched_opening_square_bracket", "["),
+        ("S_A is valid]", "S_A is valid", "remove_unmatched_closing_square_bracket", "]"),
+        ("{S_A is valid", "S_A is valid", "remove_unmatched_opening_curly_brace", "{"),
+        ("S_A is valid}", "S_A is valid", "remove_unmatched_closing_curly_brace", "}"),
+    ]
+
+    for text, cleaned_text, action, char in examples:
+        result = clean_condition_text(text)
+
+        assert result["cleaned_text"] == cleaned_text
+        assert result["changed"] is True
+        assert result["need_review"] is True
+        assert result["cleaning_actions"][0]["action"] == action
+        assert result["cleaning_actions"][0]["char"] == char
+
+
+def test_clean_condition_text_preserves_balanced_or_non_outer_brackets():
+    examples = [
+        "vehicle speed(S_VEHICLE_SPEED) is invalid",
+        "vehicle speed is invalid (S_VEHICLE_SPEED is equal to INVALID)",
+        "[S_A is valid AND S_B is invalid]",
+        "{S_VEHICLE_SPEED} is valid",
+        "|{S_COLUMN_TORQUE}| is greater than 5Nm",
+        "((S_A is valid))",
+    ]
+
+    for text in examples:
+        result = clean_condition_text(text)
+
+        assert result["cleaned_text"] == text
+        assert result["changed"] is False
+        assert result["need_review"] is False
+        assert result["cleaning_actions"] == []
+
+
+def test_clean_condition_text_repeats_outer_noise_cleanup():
+    assert clean_condition_text("((S_A is valid")["cleaned_text"] == "S_A is valid"
+    assert clean_condition_text("S_A is valid))")["cleaned_text"] == "S_A is valid"
+
+
+def test_chunk_condition_sentence_includes_text_preprocessing_debug_info():
+    result = chunk_condition_sentence("(S_A is valid AND S_B is invalid", normalized_entities=[])
+
+    preprocessing = result["debug_info"]["text_preprocessing"]
+    assert preprocessing["original_text"] == "(S_A is valid AND S_B is invalid"
+    assert preprocessing["cleaned_text"] == "S_A is valid AND S_B is invalid"
+    assert preprocessing["changed"] is True
+    assert result["chunks"][0]["text"] == "S_A is valid"
 
 
 def test_chunk_condition_sentence_splits_parenthesized_definition_and_duration():

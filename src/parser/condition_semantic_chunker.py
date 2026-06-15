@@ -1,6 +1,7 @@
 import re
 from typing import List, Sequence
 
+from src.parser.condition_text_preprocessor import clean_condition_text
 from src.schemas import JsonDict
 
 
@@ -52,7 +53,9 @@ def chunk_condition_sentence(
     """Split a condition sentence into conservative semantic chunks."""
 
     entities = list(normalized_entities or [])
-    chunk_text_source = _clean_condition_text(text)
+    clean_result = clean_condition_text(text)
+    text_for_chunking = str(clean_result["cleaned_text"])
+    chunk_text_source = _clean_condition_text(text_for_chunking)
     chunk_specs = _collect_chunk_specs(chunk_text_source)
     chunks = [_build_chunk_from_spec(index, chunk_text_source, spec) for index, spec in enumerate(chunk_specs, start=1)]
     chunks = assign_entities_to_chunks(chunks, entities)
@@ -62,6 +65,7 @@ def chunk_condition_sentence(
         "debug_info": {
             "chunk_count": len(chunks),
             "chunk_rules": _chunk_rules(chunks),
+            "text_preprocessing": clean_result,
         },
     }
 
