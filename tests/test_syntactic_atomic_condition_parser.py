@@ -817,6 +817,89 @@ def test_syntactic_parser_parses_component_state_condition():
     }
 
 
+def test_syntactic_parser_parses_feature_of_component_state_condition():
+    parsed = parse_condition_line(
+        "the status of EPS is equal to Available",
+        normalized_entities=[
+            {"mention": "status", "type": "FEATURE", "canonical_name": "status"},
+            {"mention": "EPS", "type": "COMPONENT", "canonical_name": "EPS"},
+            {"mention": "Available", "type": "STATE", "canonical_name": "Available"},
+        ],
+    )
+
+    assert parsed == {
+        "type": "feature_component_state_condition",
+        "condition_type": "feature_component_state_condition",
+        "feature": "status",
+        "feature_mention": "status",
+        "component": "EPS",
+        "component_mention": "EPS",
+        "component_relation": "of",
+        "state": "Available",
+        "state_mention": "Available",
+        "operator": "=",
+        "polarity": "positive",
+        "source": "feature_component_state_rule",
+        "confidence": 0.88,
+        "parser": "syntactic",
+        "need_review": False,
+    }
+
+
+def test_syntactic_parser_parses_signal_in_component_state_condition():
+    parsed = parse_condition_line(
+        "the request in CAN1 is equal to Valid",
+        normalized_entities=[
+            {"mention": "request", "type": "SIGNAL", "canonical_name": "S_CAN_REQUEST"},
+            {"mention": "CAN1", "type": "COMPONENT", "canonical_name": "CAN1"},
+            {"mention": "Valid", "type": "STATE", "canonical_name": "Valid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "feature_component_state_condition"
+    assert parsed["feature"] == "S_CAN_REQUEST"
+    assert parsed["feature_mention"] == "request"
+    assert parsed["component"] == "CAN1"
+    assert parsed["component_relation"] == "in"
+    assert parsed["state"] == "Valid"
+    assert parsed["operator"] == "="
+    assert parsed["need_review"] is False
+
+
+def test_syntactic_parser_parses_negative_feature_component_state_condition():
+    parsed = parse_condition_line(
+        "the validity of steering angle request is not equal to Valid",
+        normalized_entities=[
+            {"mention": "validity", "type": "FEATURE", "canonical_name": "validity"},
+            {"mention": "steering angle request", "type": "COMPONENT", "canonical_name": "SteeringAngleRequest"},
+            {"mention": "Valid", "type": "STATE", "canonical_name": "Valid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "feature_component_state_condition"
+    assert parsed["feature"] == "validity"
+    assert parsed["component"] == "SteeringAngleRequest"
+    assert parsed["component_relation"] == "of"
+    assert parsed["operator"] == "!="
+    assert parsed["polarity"] == "negative"
+
+
+def test_syntactic_parser_parses_symbolic_negative_feature_component_state_condition():
+    parsed = parse_condition_line(
+        "the signal on left lane is != Invalid",
+        normalized_entities=[
+            {"mention": "signal", "type": "FEATURE", "canonical_name": "signal"},
+            {"mention": "left lane", "type": "COMPONENT", "canonical_name": "left lane"},
+            {"mention": "Invalid", "type": "STATE", "canonical_name": "Invalid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "feature_component_state_condition"
+    assert parsed["component_relation"] == "on"
+    assert parsed["operator"] == "!="
+    assert parsed["polarity"] == "negative"
+
+
 def test_syntactic_parser_expands_quantified_component_members_state_condition():
     parsed = parse_condition_line(
         "one of the steering channels is Active",

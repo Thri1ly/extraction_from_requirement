@@ -12,7 +12,7 @@ from src.parser.atomic_condition_parser import (
 from src.schemas import JsonDict, number_value
 
 
-SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT"}
+SUPPORTED_ENTITY_TYPES = {"SIGNAL", "STATE", "VALUE", "PARAMETER", "COMPONENT", "FAULT", "FEATURE"}
 RELATION_PATTERN = re.compile(
     r"\b(?:is|are|be|shall\s+be|should\s+be|must\s+be|become|becomes|remain|remains)\b",
     flags=re.IGNORECASE,
@@ -52,6 +52,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     placeholder_text = str(analysis["placeholder_text"])
     placeholder_map = analysis["placeholder_map"]
     signals = _placeholders_by_type(placeholder_map, "SIGNAL")
+    features = _placeholders_by_type(placeholder_map, "FEATURE")
     components = _placeholders_by_type(placeholder_map, "COMPONENT")
     faults = _placeholders_by_type(placeholder_map, "FAULT")
     right_entities = _right_relation_entities(placeholder_map)
@@ -62,6 +63,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions.extend(_parse_component_state_condition(text, placeholder_text, components, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
+    conditions.extend(_parse_feature_component_state_condition(text, placeholder_text, features + signals, components, right_entities, placeholder_map))
     conditions.extend(_parse_bracketed_range_condition(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_signal_value_state_clause_group(text, placeholder_text, signals, placeholder_map))
     conditions.extend(_parse_quantified_signal_member_right(text, placeholder_text, signals, right_entities, placeholder_map))
@@ -338,6 +340,85 @@ def _parse_explicit_parenthesized_condition(
         return [condition]
 
     return []
+
+
+def _parse_feature_component_state_condition(
+    original_text: str,
+    placeholder_text: str,
+    feature_placeholders: List[str],
+    components: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(components) != 1 or len(right_entities) != 1:
+        return []
+
+    state_placeholder = right_entities[0]
+    if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
+        return []
+
+    component_placeholder = components[0]
+    entity_feature_pattern = "|".join(re.escape(placeholder) for placeholder in feature_placeholders)
+    raw_feature_pattern = r"[A-Za-z][A-Za-z0-9_ -]*?"
+    if entity_feature_pattern:
+        feature_pattern = rf"(?P<feature>{entity_feature_pattern})|(?P<raw_feature>{raw_feature_pattern})"
+    else:
+        feature_pattern = rf"(?P<raw_feature>{raw_feature_pattern})"
+
+    predicate_pattern = (
+        rf"(?:{RELATION_PATTERN.pattern}\s+(?:not\s+)?equal\s+to|"
+        rf"{RELATION_PATTERN.pattern}\s+(?:!=|==|=)|"
+        rf"{RELATION_PATTERN.pattern}|"
+        r"(?:not\s+)?equal\s+to|!=|==|=)"
+    )
+    match = re.search(
+        rf"\b(?:the\s+|a\s+|an\s+)?(?:{feature_pattern})\s+"
+        rf"(?P<component_relation>of|in|on)\s+{re.escape(component_placeholder)}\s+"
+        rf"(?P<predicate>{predicate_pattern})\s+{re.escape(state_placeholder)}\b",
+        placeholder_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+
+    feature_placeholder = match.groupdict().get("feature")
+    raw_feature = match.groupdict().get("raw_feature")
+    if feature_placeholder:
+        feature_entity = placeholder_map[feature_placeholder]["entity"]
+        feature = str(feature_entity.get("canonical_name") or feature_entity.get("mention"))
+        feature_mention = _display_entity_mention(original_text, feature_entity)
+        feature_need_review = False
+    else:
+        feature_mention = str(raw_feature or "").strip()
+        feature = feature_mention
+        feature_need_review = True
+
+    component = placeholder_map[component_placeholder]["entity"]
+    state = placeholder_map[state_placeholder]["entity"]
+    operator = _operator_from_text(match.group("predicate")) or "=="
+    polarity = "negative" if operator == "!=" else "positive"
+    if operator == "==":
+        operator = "="
+
+    return [
+        {
+            "type": "feature_component_state_condition",
+            "condition_type": "feature_component_state_condition",
+            "feature": feature,
+            "feature_mention": feature_mention,
+            "component": str(component.get("canonical_name") or component.get("mention")),
+            "component_mention": _display_entity_mention(original_text, component),
+            "component_relation": match.group("component_relation").lower(),
+            "state": str(state.get("canonical_name") or state.get("mention")),
+            "state_mention": _display_entity_mention(original_text, state),
+            "operator": operator,
+            "polarity": polarity,
+            "source": "feature_component_state_rule",
+            "confidence": 0.88,
+            "parser": "syntactic",
+            "need_review": feature_need_review,
+        }
+    ]
 
 
 def _parse_bracketed_range_condition(
