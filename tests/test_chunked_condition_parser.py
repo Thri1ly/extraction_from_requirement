@@ -236,6 +236,46 @@ def test_parse_chunked_condition_does_not_parse_from_source_as_temporal_context(
     assert all(chunk["chunk_type"] != "temporal_context_constraint" for chunk in parsed["parsed_chunks"])
 
 
+def test_parse_chunked_condition_parses_quantified_parenthesized_member_group():
+    parsed = parse_chunked_condition(
+        "the signal on both lane (S_LANE1 is equal to VALID) and (S_LANE2 is equal to VALID) are valid",
+        normalized_entities=[
+            {"mention": "S_LANE1", "type": "SIGNAL", "canonical_name": "S_LANE1"},
+            {"mention": "S_LANE2", "type": "SIGNAL", "canonical_name": "S_LANE2"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    group_chunks = [
+        chunk
+        for chunk in parsed["parsed_chunks"]
+        if chunk["parse_result"].get("condition_type") == "quantified_member_expression_group"
+    ]
+
+    assert group_chunks
+    parse_result = group_chunks[0]["parse_result"]
+    assert parse_result["group_mention"] == "the signal on both lane"
+    assert parse_result["quantifier"] == "ALL"
+    assert parse_result["logic"] == "AND"
+    assert parse_result["shared_state"] == "valid"
+    assert len(parse_result["member_conditions"]) == 2
+    assert all(condition.get("type") == "signal_state_condition" for condition in parse_result["member_conditions"])
+
+
+def test_parse_chunked_condition_preserves_failed_quantified_member_parse():
+    parsed = parse_chunked_condition(
+        "the signal on both lane (S_LANE1 unsupported relation P_LIMIT) and (S_LANE2 is equal to VALID) are valid"
+    )
+
+    parse_result = parsed["parsed_chunks"][0]["parse_result"]
+
+    assert parse_result["condition_type"] == "quantified_member_expression_group"
+    assert parse_result["need_review"] is True
+    assert parse_result["member_conditions"][0]["raw_text"] == "S_LANE1 unsupported relation P_LIMIT"
+    assert parse_result["member_conditions"][0]["need_review"] is True
+    assert len(parse_result["member_conditions"]) == 2
+
+
 def test_parse_atomic_chunk_adapter_supports_syntactic_and_legacy_names():
     entities = [
         {"mention": "S_STATUS", "type": "SIGNAL", "canonical_name": "S_STATUS"},

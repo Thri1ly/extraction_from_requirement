@@ -362,6 +362,65 @@ def test_chunk_condition_sentence_does_not_split_source_from_phrase():
     assert result["chunks"][0]["chunk_type"] != "temporal_context_constraint"
 
 
+def test_chunk_condition_sentence_protects_quantified_parenthesized_member_group_with_comparison_members():
+    text = "the signal on both lane (S_LANE1 > P_LIMIT) and (S_LANE2 > P_LIMIT) are valid"
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert len(result["chunks"]) == 1
+    chunk = result["chunks"][0]
+    assert chunk["chunk_type"] == "quantified_parenthesized_member_group"
+    assert chunk["text"] == text
+    assert chunk["group_mention"] == "the signal on both lane"
+    assert chunk["quantifier_hint"] == "ALL"
+    assert chunk["logic_hint"] == "AND"
+    assert chunk["shared_state"] == "valid"
+    assert chunk["source"] == "quantified_parenthesized_member_group"
+    assert [member["text"] for member in chunk["member_chunks"]] == ["S_LANE1 > P_LIMIT", "S_LANE2 > P_LIMIT"]
+    assert all(member["chunk_type"] == "atomic_condition" for member in chunk["member_chunks"])
+
+
+def test_chunk_condition_sentence_protects_quantified_parenthesized_member_group_with_textual_members():
+    text = "the signal on both lane (S_LANE1 is equal to VALID) and (S_LANE2 is equal to VALID) are valid"
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    chunk = result["chunks"][0]
+    assert len(result["chunks"]) == 1
+    assert chunk["chunk_type"] == "quantified_parenthesized_member_group"
+    assert chunk["quantifier_hint"] == "ALL"
+    assert chunk["logic_hint"] == "AND"
+    assert chunk["shared_state"] == "valid"
+    assert [member["text"] for member in chunk["member_chunks"]] == [
+        "S_LANE1 is equal to VALID",
+        "S_LANE2 is equal to VALID",
+    ]
+
+
+def test_chunk_condition_sentence_protects_any_one_quantified_parenthesized_member_group():
+    text = "one of the signals (S_LANE1 > P_LIMIT) or (S_LANE2 > P_LIMIT) is valid"
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    chunk = result["chunks"][0]
+    assert len(result["chunks"]) == 1
+    assert chunk["chunk_type"] == "quantified_parenthesized_member_group"
+    assert chunk["quantifier_hint"] == "ANY_ONE"
+    assert chunk["logic_hint"] == "OR"
+    assert chunk["shared_state"] == "valid"
+    assert len(chunk["member_chunks"]) == 2
+
+
+def test_chunk_condition_sentence_protects_available_quantified_parenthesized_member_group():
+    text = "both signal requests (S_REQ1 is equal to AVAILABLE) and (S_REQ2 is equal to AVAILABLE) are available"
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    chunk = result["chunks"][0]
+    assert len(result["chunks"]) == 1
+    assert chunk["chunk_type"] == "quantified_parenthesized_member_group"
+    assert chunk["quantifier_hint"] == "ALL"
+    assert chunk["logic_hint"] == "AND"
+    assert chunk["shared_state"] == "available"
+    assert len(chunk["member_chunks"]) == 2
+
+
 def test_find_balanced_square_bracket_span_returns_outer_span_or_none():
     text = "prefix[(S_A is equal to normal) AND (S_B is greater than 'static limit')] suffix"
 

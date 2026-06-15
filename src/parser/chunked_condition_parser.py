@@ -168,6 +168,50 @@ def parse_temporal_context_constraint(text: str) -> JsonDict:
     }
 
 
+def parse_quantified_parenthesized_member_group(
+    chunk: JsonDict,
+    atomic_parser: str = "syntactic",
+) -> JsonDict:
+    member_conditions: list[JsonDict] = []
+    need_review = False
+    for member in list(chunk.get("member_chunks", [])):
+        member_text = str(member.get("text", ""))
+        try:
+            parsed_member = parse_atomic_chunk(
+                member_text,
+                normalized_entities=list(chunk.get("entities", [])),
+                atomic_parser=atomic_parser,
+            )
+        except Exception as exc:
+            parsed_member = {
+                "condition_type": "unparsed_chunk",
+                "raw_text": member_text,
+                "need_review": True,
+                "confidence": 0.3,
+                "review_reason": f"atomic parser error: {type(exc).__name__}",
+            }
+        if parsed_member.get("type") == "unparsed_condition" or parsed_member.get("condition_type") == "unparsed_chunk":
+            parsed_member = {
+                "condition_type": "unparsed_chunk",
+                "raw_text": member_text,
+                "need_review": True,
+                "confidence": 0.3,
+            }
+        if parsed_member.get("need_review"):
+            need_review = True
+        member_conditions.append(parsed_member)
+
+    return {
+        "condition_type": "quantified_member_expression_group",
+        "group_mention": str(chunk.get("group_mention", "")),
+        "quantifier": str(chunk.get("quantifier_hint", "")),
+        "logic": str(chunk.get("logic_hint", "")),
+        "shared_state": chunk.get("shared_state"),
+        "member_conditions": member_conditions,
+        "need_review": need_review,
+    }
+
+
 def _parse_chunk(chunk: JsonDict, atomic_parser: str) -> JsonDict:
     if chunk.get("chunk_type") == "duration_constraint":
         parse_result = parse_duration_constraint(str(chunk.get("text", "")))
@@ -175,6 +219,8 @@ def _parse_chunk(chunk: JsonDict, atomic_parser: str) -> JsonDict:
         parse_result = parse_phase_timing_constraint(str(chunk.get("text", "")))
     elif chunk.get("chunk_type") == "temporal_context_constraint":
         parse_result = parse_temporal_context_constraint(str(chunk.get("text", "")))
+    elif chunk.get("chunk_type") == "quantified_parenthesized_member_group":
+        parse_result = parse_quantified_parenthesized_member_group(chunk, atomic_parser=atomic_parser)
     else:
         try:
             parse_result = parse_atomic_chunk(

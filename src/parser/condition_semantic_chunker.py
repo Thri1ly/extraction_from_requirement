@@ -44,6 +44,10 @@ CONDITION_STATUS_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 TOP_LEVEL_CONNECTOR_PATTERN = re.compile(r"\b(and|or|but)\b", flags=re.IGNORECASE)
+SHARED_STATE_PATTERN = re.compile(
+    r"\b(?:is|are)\s+(?P<state>valid|invalid|active|inactive|available|unavailable|degraded|enabled|disabled)\b",
+    flags=re.IGNORECASE,
+)
 PHASE_WORDS = [
     "normal operation",
     "activation",
@@ -238,6 +242,55 @@ def extract_temporal_context_constraint(text: str) -> JsonDict | None:
     return _temporal_context_constraint_from_match(match)
 
 
+def extract_quantified_parenthesized_member_group(text: str) -> JsonDict | None:
+    parenthesis_spans = _parenthesis_spans(text)
+    if len(parenthesis_spans) < 2:
+        return None
+
+    first_span, second_span = parenthesis_spans[0], parenthesis_spans[1]
+    prefix_span = _trim_span(text, [0, first_span[0]])
+    connector_text = text[first_span[1] : second_span[0]].strip()
+    suffix_span = _trim_span(text, [second_span[1], len(text)])
+    if prefix_span[0] >= prefix_span[1] or suffix_span[0] >= suffix_span[1]:
+        return None
+
+    connector_match = re.fullmatch(r"(and|or)", connector_text, flags=re.IGNORECASE)
+    if not connector_match:
+        return None
+
+    suffix_text = text[suffix_span[0] : suffix_span[1]]
+    shared_state_match = SHARED_STATE_PATTERN.search(suffix_text)
+    if not shared_state_match:
+        return None
+
+    group_mention = text[prefix_span[0] : prefix_span[1]].strip()
+    quantifier_hint = _quantifier_hint(group_mention)
+    if not quantifier_hint:
+        return None
+
+    member_chunks = []
+    for span in (first_span, second_span):
+        inner_span = _trim_span(text, [span[0] + 1, span[1] - 1])
+        if inner_span[0] >= inner_span[1]:
+            return None
+        member_text = text[inner_span[0] : inner_span[1]]
+        if not looks_like_complete_condition(member_text):
+            return None
+        member_chunks.append({"chunk_type": "atomic_condition", "text": member_text})
+
+    return {
+        "chunk_type": "quantified_parenthesized_member_group",
+        "text": text.strip(),
+        "span": _trim_span(text, [0, len(text)]),
+        "source": "quantified_parenthesized_member_group",
+        "group_mention": group_mention,
+        "member_chunks": member_chunks,
+        "shared_state": shared_state_match.group("state").lower(),
+        "quantifier_hint": quantifier_hint,
+        "logic_hint": connector_match.group(1).upper(),
+    }
+
+
 def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:
     left = text[: int(connector_span[0])]
     right = text[int(connector_span[1]) :]
@@ -270,6 +323,10 @@ def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tu
     square_bracket_specs = _square_bracket_group_specs(text)
     if square_bracket_specs:
         return square_bracket_specs
+
+    quantified_group_specs = _quantified_parenthesized_member_group_specs(text)
+    if quantified_group_specs:
+        return quantified_group_specs
 
     all_parenthesis_spans = _parenthesis_spans(text)
     parenthesis_duration_specs = _parenthesis_duration_chunk_specs(text, all_parenthesis_spans)
@@ -343,6 +400,18 @@ def _collect_occupied_span_specs(
 
     span = _trim_span(text, [0, len(text)])
     return [(span, _classify_main_chunk(text[span[0] : span[1]], has_special_structure=False), "main_clause")]
+
+
+def _quantified_parenthesized_member_group_specs(text: str) -> List[tuple]:
+    group = extract_quantified_parenthesized_member_group(text)
+    if not group:
+        return []
+    metadata = dict(group)
+    span = metadata.pop("span")
+    chunk_type = metadata.pop("chunk_type")
+    source = metadata.pop("source")
+    metadata.pop("text", None)
+    return [(span, chunk_type, source, metadata)]
 
 
 def _temporal_constraint_specs(text: str) -> List[tuple]:
@@ -585,6 +654,7 @@ def _confidence_for_chunk_type(chunk_type: str) -> float:
         "duration_constraint",
         "phase_timing_constraint",
         "temporal_context_constraint",
+        "quantified_parenthesized_member_group",
     }:
         return 0.9
     if chunk_type == "natural_language_event":
@@ -702,6 +772,15 @@ def _normalize_relative_time(value: str | None) -> str | None:
     if normalized in {"current", "present"}:
         return "current"
     return normalized
+
+
+def _quantifier_hint(text: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", text.strip().lower())
+    if re.search(r"\b(?:one of|at least one of|either)\b", normalized):
+        return "ANY_ONE"
+    if re.search(r"\b(?:both|all|all of)\b", normalized):
+        return "ALL"
+    return None
 
 
 def _trim_span(text: str, span: Sequence[int]) -> list[int]:
