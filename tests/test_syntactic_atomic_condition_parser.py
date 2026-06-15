@@ -1188,6 +1188,27 @@ def test_entity_property_state_with_context():
     assert parsed["need_review"] is False
 
 
+def test_entity_property_state_with_feature_entity_and_raw_property():
+    parsed = parse_condition_line(
+        "ADAS signals on lane1 is valid",
+        normalized_entities=[
+            {"mention": "ADAS", "type": "FEATURE", "canonical_name": "ADAS"},
+            {"mention": "lane1", "type": "COMPONENT", "canonical_name": "lane1"},
+            {"mention": "valid", "type": "STATE", "canonical_name": "valid"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "entity_property_state_condition"
+    assert parsed["entity"] == "ADAS"
+    assert parsed["property"] == "signals"
+    assert parsed["property_mention"] == "signals"
+    assert parsed["context_relation"] == "on"
+    assert parsed["context"] == "lane1"
+    assert parsed["state"] == "valid"
+    assert parsed["operator"] == "="
+    assert parsed["need_review"] is False
+
+
 def test_property_of_signal_threshold():
     parsed = parse_condition_line(
         "resolution of S_CAMERA_SIGNAL > P_RESOLUTION_LIMIT",

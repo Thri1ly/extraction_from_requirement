@@ -226,7 +226,7 @@ def _parse_entity_property_state_condition(
     entity_placeholders = [
         placeholder
         for placeholder, payload in placeholder_map.items()
-        if str(payload["entity"].get("type", "")).upper() in {"COMPONENT", "SIGNAL"}
+        if str(payload["entity"].get("type", "")).upper() in {"COMPONENT", "SIGNAL", "FEATURE"}
     ]
     property_placeholders = [
         placeholder
@@ -283,6 +283,9 @@ def _parse_entity_property_state_condition(
             property_token,
             placeholder_map,
         )
+        if property_token not in placeholder_map and _is_known_property_word(property_token):
+            property_value = _normalize_raw_property_value(property_token)
+            property_need_review = False
         context_relation = match.groupdict().get("context_relation")
         context_value = None
         context_mention = None
@@ -1423,6 +1426,8 @@ def _known_property_words() -> List[str]:
         "quality",
         "status",
         "accuracy",
+        "signals",
+        "signal",
     ]
 
 
