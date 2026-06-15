@@ -1,0 +1,7 @@
+{"mention":"S_VEHICLE_SPEED","canonical_name":"S_VEHICLE_SPEED","type":"SIGNAL"}
+{"mention":"vehicle speed","canonical_name":"S_VEHICLE_SPEED","type":"SIGNAL"}
+{"mention":"valid","canonical_name":"valid","type":"STATE"}
+{"mention":"INVALID","canonical_name":"INVALID","type":"STATE"}
+{"mention":"P_LIMIT","canonical_name":"P_LIMIT","type":"PARAMETER"}
+{"mention":"S_LANE1","canonical_name":"S_LANE1","type":"SIGNAL"}
+{"mention":"S_LANE2","canonical_name":"S_LANE2","type":"SIGNAL"}
