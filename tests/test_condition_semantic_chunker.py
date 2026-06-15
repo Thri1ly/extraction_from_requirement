@@ -198,8 +198,24 @@ def test_parenthesized_condition_group_symbolic_and():
     assert chunk["chunk_type"] == "parenthesized_condition_group"
     assert chunk["logic"] == "AND"
     assert len(chunk["sub_chunks"]) == 2
+    assert chunk["sub_chunks"][0]["chunk_id"] == "CHUNK_1_1"
+    assert chunk["sub_chunks"][1]["chunk_id"] == "CHUNK_1_2"
     assert chunk["sub_chunks"][0]["text"] == "S_VEHICLE_SPEED >= P_SPEED_LIMIT"
     assert chunk["sub_chunks"][1]["text"] == "S_SPEED_QF = VALID"
+
+
+def test_parenthesized_condition_group_has_sub_chunks():
+    result = chunk_condition_sentence(
+        "(S_VEHICLE_SPEED >= P_SPEED_LIMIT AND S_SPEED_QF = VALID)",
+        normalized_entities=[],
+    )
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["chunk_type"] == "parenthesized_condition_group"
+    assert result["chunks"][0]["logic"] == "AND"
+    assert len(result["chunks"][0]["sub_chunks"]) == 2
+    assert result["chunks"][0]["sub_chunks"][0]["text"] == "S_VEHICLE_SPEED >= P_SPEED_LIMIT"
+    assert result["chunks"][0]["sub_chunks"][1]["text"] == "S_SPEED_QF = VALID"
 
 
 def test_parenthesized_condition_group_symbolic_or():

@@ -306,7 +306,7 @@ def extract_parenthesized_condition_group(text: str) -> JsonDict | None:
         return None
 
     inner_text = text[inner_span[0] : inner_span[1]]
-    split = split_parenthesized_condition_group(inner_text)
+    split = split_parenthesized_condition_group_sub_chunks(inner_text)
     if not split:
         return None
 
@@ -320,43 +320,47 @@ def extract_parenthesized_condition_group(text: str) -> JsonDict | None:
     }
 
 
-def split_parenthesized_condition_group(parenthesis_content: str) -> JsonDict | None:
+def split_parenthesized_condition_group_sub_chunks(group_text: str) -> JsonDict | None:
     """Split a parenthesized condition group into atomic member chunks."""
 
     connectors: list[tuple[re.Match[str], list[int]]] = []
-    for match in re.finditer(r"\b(AND|OR)\b", parenthesis_content, flags=re.IGNORECASE):
+    for match in re.finditer(r"\b(AND|OR)\b", group_text, flags=re.IGNORECASE):
         span = [match.start(), match.end()]
-        if _is_top_level_span(parenthesis_content, span):
+        if _is_top_level_span(group_text, span):
             connectors.append((match, span))
 
-    if not connectors:
+    if len(connectors) != 1:
         return None
 
     logic_values = [match.group(1).upper() for match, _span in connectors]
-    if not all(logic == logic_values[0] for logic in logic_values):
-        return None
 
     sub_chunks: list[JsonDict] = []
     cursor = 0
-    for match, _span in connectors:
-        part_span = _trim_span(parenthesis_content, [cursor, match.start()])
-        if part_span[0] >= part_span[1]:
-            return None
-        part_text = parenthesis_content[part_span[0] : part_span[1]]
-        if not looks_like_complete_condition_expression(part_text):
-            return None
-        sub_chunks.append({"chunk_type": "atomic_condition", "text": part_text})
-        cursor = match.end()
+    match, _span = connectors[0]
+    part_span = _trim_span(group_text, [cursor, match.start()])
+    if part_span[0] >= part_span[1]:
+        return None
+    part_text = group_text[part_span[0] : part_span[1]]
+    if not looks_like_complete_condition_expression(part_text):
+        return None
+    sub_chunks.append({"chunk_id": "CHUNK_1_1", "chunk_type": "atomic_condition", "text": part_text})
+    cursor = match.end()
 
-    tail_span = _trim_span(parenthesis_content, [cursor, len(parenthesis_content)])
+    tail_span = _trim_span(group_text, [cursor, len(group_text)])
     if tail_span[0] >= tail_span[1]:
         return None
-    tail_text = parenthesis_content[tail_span[0] : tail_span[1]]
+    tail_text = group_text[tail_span[0] : tail_span[1]]
     if not looks_like_complete_condition_expression(tail_text):
         return None
-    sub_chunks.append({"chunk_type": "atomic_condition", "text": tail_text})
+    sub_chunks.append({"chunk_id": "CHUNK_1_2", "chunk_type": "atomic_condition", "text": tail_text})
 
     return {"logic": logic_values[0], "sub_chunks": sub_chunks}
+
+
+def split_parenthesized_condition_group(parenthesis_content: str) -> JsonDict | None:
+    """Backward-compatible wrapper for parenthesized condition group splitting."""
+
+    return split_parenthesized_condition_group_sub_chunks(parenthesis_content)
 
 
 def is_protected_connector(text: str, connector_span: Sequence[int]) -> bool:

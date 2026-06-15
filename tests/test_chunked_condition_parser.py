@@ -292,8 +292,28 @@ def test_parse_chunked_condition_parses_parenthesized_condition_group():
     assert parse_result["condition_type"] == "parenthesized_condition_group"
     assert parse_result["logic"] == "AND"
     assert len(parse_result["member_conditions"]) == 2
-    assert parse_result["member_conditions"][0]["type"] == "parameter_threshold_condition"
-    assert parse_result["member_conditions"][1]["type"] == "signal_state_condition"
+    assert parse_result["member_conditions"][0]["parse_result"]["type"] == "parameter_threshold_condition"
+    assert parse_result["member_conditions"][1]["parse_result"]["type"] == "signal_state_condition"
+
+
+def test_parenthesized_condition_group_parses_sub_chunks():
+    parsed = parse_chunked_condition(
+        "(S_VEHICLE_SPEED >= P_SPEED_LIMIT AND S_SPEED_QF = VALID)",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+            {"mention": "S_SPEED_QF", "type": "SIGNAL", "canonical_name": "S_SPEED_QF"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    parse_result = parsed["parsed_chunks"][0]["parse_result"]
+
+    assert parse_result["condition_type"] == "parenthesized_condition_group"
+    assert len(parse_result["member_conditions"]) == 2
+    assert parse_result["member_conditions"][0]["raw_text"] == "S_VEHICLE_SPEED >= P_SPEED_LIMIT"
+    assert parse_result["member_conditions"][1]["raw_text"] == "S_SPEED_QF = VALID"
+    assert parse_result["member_conditions"][0]["raw_text"] != parsed["chunks"][0]["text"]
 
 
 def test_parse_atomic_chunk_adapter_supports_syntactic_and_legacy_names():

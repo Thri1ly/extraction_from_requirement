@@ -243,7 +243,12 @@ def parse_parenthesized_condition_group(
             }
         if parsed_member.get("need_review"):
             need_review = True
-        member_conditions.append(parsed_member)
+        member_conditions.append(
+            {
+                "raw_text": member_text,
+                "parse_result": parsed_member,
+            }
+        )
 
     return {
         "condition_type": "parenthesized_condition_group",

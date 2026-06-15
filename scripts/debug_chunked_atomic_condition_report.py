@@ -358,6 +358,10 @@ def parse_special_chunk(chunk: JsonDict, atomic_parser: str = "syntactic") -> Js
             from src.parser.chunked_condition_parser import parse_quantified_parenthesized_member_group
 
             return parse_quantified_parenthesized_member_group(chunk, atomic_parser=atomic_parser)
+        if chunk_type == "parenthesized_condition_group":
+            from src.parser.chunked_condition_parser import parse_parenthesized_condition_group
+
+            return parse_parenthesized_condition_group(chunk, atomic_parser=atomic_parser)
     except Exception as exc:
         return {
             "condition_type": "special_chunk_parse_error",
