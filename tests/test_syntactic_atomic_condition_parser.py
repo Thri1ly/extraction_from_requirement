@@ -742,6 +742,61 @@ def test_syntactic_parser_parses_parenthesized_signal_state_with_predicate():
     }
 
 
+def test_signal_alias_explicit_same_canonical_equal_state():
+    parsed = parse_condition_line(
+        "the steering angle request(S_SPC_ANGLE_REQUEST) is equal to VALID",
+        normalized_entities=[
+            {"mention": "steering angle request", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "S_SPC_ANGLE_REQUEST", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_SPC_ANGLE_REQUEST"
+    assert parsed["state"] == "VALID"
+    assert parsed["operator"] == "="
+    assert parsed["source"] == "signal_alias_explicit_same_canonical"
+    assert parsed["confidence"]["overall"] == 0.93
+    assert parsed["need_review"] is False
+    assert parsed.get("review_reason") != "ambiguous signal or state candidates"
+
+
+def test_signal_alias_explicit_same_canonical_not_equal_state():
+    parsed = parse_condition_line(
+        "the steering angle request (S_SPC_ANGLE_REQUEST) is not equal to VALID",
+        normalized_entities=[
+            {"mention": "steering angle request", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "S_SPC_ANGLE_REQUEST", "type": "SIGNAL", "canonical_name": "S_SPC_ANGLE_REQUEST"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "signal_state_condition"
+    assert parsed["signal"] == "S_SPC_ANGLE_REQUEST"
+    assert parsed["state"] == "VALID"
+    assert parsed["operator"] == "!="
+    assert parsed["polarity"] == "negative"
+    assert parsed["source"] == "signal_alias_explicit_same_canonical"
+    assert parsed["confidence"]["overall"] == 0.9
+    assert parsed["need_review"] is False
+
+
+def test_signal_alias_explicit_canonical_mismatch_needs_review():
+    parsed = parse_condition_line(
+        "alias signal(S_OTHER_SIGNAL) is equal to VALID",
+        normalized_entities=[
+            {"mention": "alias signal", "type": "SIGNAL", "canonical_name": "S_ALIAS_SIGNAL"},
+            {"mention": "S_OTHER_SIGNAL", "type": "SIGNAL", "canonical_name": "S_OTHER_SIGNAL"},
+            {"mention": "VALID", "type": "STATE", "canonical_name": "VALID"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "signal_state_condition"
+    assert parsed["need_review"] is True
+    assert parsed["review_reason"] == "alias_explicit_signal_canonical_mismatch"
+
+
 def test_syntactic_parser_parses_component_state_condition():
     parsed = parse_condition_line(
         "EPS is in Degraded",

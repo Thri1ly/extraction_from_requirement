@@ -219,9 +219,13 @@ def _parse_parenthesized_signal_state_with_predicate(
     if str(placeholder_map[state_placeholder]["entity"].get("type", "")).upper() != "STATE":
         return []
 
+    predicate_pattern = (
+        rf"(?:{RELATION_PATTERN.pattern}(?:\s+(?:not\s+)?equal\s+to|\s+equals?)?|"
+        r"\b(?:not\s+equal\s+to|equal\s+to|equals?)\b)"
+    )
     match = re.search(
         rf"\b(?P<outer>SIGNAL_\d+)\s*\(\s*(?P<inner>SIGNAL_\d+)\s*\)\s+"
-        rf"{RELATION_PATTERN.pattern}\s+{re.escape(state_placeholder)}\b",
+        rf"(?P<predicate>{predicate_pattern})\s+{re.escape(state_placeholder)}\b",
         placeholder_text,
         flags=re.IGNORECASE,
     )
@@ -239,16 +243,32 @@ def _parse_parenthesized_signal_state_with_predicate(
     if not condition:
         return []
 
+    predicate_text = match.group("predicate")
+    explicit_equality = bool(re.search(r"\b(?:not\s+equal\s+to|equal\s+to|equals?)\b", predicate_text, flags=re.IGNORECASE))
+    if explicit_equality:
+        condition["condition_type"] = condition["type"]
+        condition["state"] = condition.get("required_state")
+        condition["source"] = "signal_alias_explicit_same_canonical"
+        if condition.get("operator") == "==":
+            condition["operator"] = "="
+        condition["mention"] = f"{condition['signal']} {condition['operator']} {condition['state']}"
+        if condition.get("operator") == "!=":
+            condition["polarity"] = "negative"
+
     condition["parser"] = "syntactic"
     condition["confidence"] = {
-        "overall": 0.93,
+        "overall": 0.9 if explicit_equality and condition.get("operator") == "!=" else 0.93,
         "structure": 0.93,
         "normalization": 0.95,
     }
     condition["need_review"] = False
     if not _same_canonical_entity(placeholder_map[outer_signal]["entity"], placeholder_map[inner_signal]["entity"]):
         condition["need_review"] = True
-        condition["review_reason"] = "parenthesized signal canonical differs from leading signal"
+        condition["review_reason"] = (
+            "alias_explicit_signal_canonical_mismatch"
+            if explicit_equality
+            else "parenthesized signal canonical differs from leading signal"
+        )
         condition["confidence"]["overall"] = 0.72
         condition["confidence"]["normalization"] = 0.72
     return [condition]
