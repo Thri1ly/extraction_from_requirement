@@ -11,31 +11,54 @@ def test_syntactic_parser_expands_single_signal_multi_state_with_shall_be():
         ],
     )
 
-    assert parsed == {
-        "type": "condition_group",
-        "logic": "OR",
-        "mention": "EPS system state shall be LIMP HOME or LIMP ASIDE",
-        "children": [
-            {
-                "type": "signal_state_condition",
-                "mention": "EPS system state == LIMP_HOME",
-                "signal": "S_EPS_SYSTEM_STATE",
-                "operator": "==",
-                "required_state": "LIMP_HOME",
-                "need_review": False,
-            },
-            {
-                "type": "signal_state_condition",
-                "mention": "EPS system state == LIMP_ASIDE",
-                "signal": "S_EPS_SYSTEM_STATE",
-                "operator": "==",
-                "required_state": "LIMP_ASIDE",
-                "need_review": False,
-            },
+    assert parsed["condition_type"] == "single_signal_multiple_states_condition"
+    assert parsed["signal"] == "S_EPS_SYSTEM_STATE"
+    assert parsed["operator"] == "="
+    assert parsed["logic"] == "OR"
+    assert parsed["states"] == ["LIMP_HOME", "LIMP_ASIDE"]
+    assert parsed["state_mentions"] == ["LIMP HOME", "LIMP ASIDE"]
+    assert parsed["need_review"] is False
+
+
+def test_single_signal_multiple_states_alias_explicit():
+    parsed = parse_condition_line(
+        "the column signal (S_COLUMN_TORQUE) is equal to UNINITIALIZED or UNAVAILABLE",
+        normalized_entities=[
+            {"mention": "column signal", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "UNINITIALIZED", "type": "STATE", "canonical_name": "UNINITIALIZED"},
+            {"mention": "UNAVAILABLE", "type": "STATE", "canonical_name": "UNAVAILABLE"},
         ],
-        "parser": "syntactic",
-        "need_review": False,
-    }
+    )
+
+    assert parsed["condition_type"] == "single_signal_multiple_states_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["signal_mention"] == "column signal"
+    assert parsed["explicit_signal_mention"] == "S_COLUMN_TORQUE"
+    assert parsed["operator"] == "="
+    assert parsed["logic"] == "OR"
+    assert parsed["states"] == ["UNINITIALIZED", "UNAVAILABLE"]
+    assert parsed["state_mentions"] == ["UNINITIALIZED", "UNAVAILABLE"]
+    assert parsed["source"] == "single_signal_multiple_right_states_rule"
+    assert parsed["need_review"] is False
+
+
+def test_single_signal_multiple_states_simple():
+    parsed = parse_condition_line(
+        "S_COLUMN_TORQUE is equal to DEGRADED or FULL",
+        normalized_entities=[
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "DEGRADED", "type": "STATE", "canonical_name": "DEGRADED"},
+            {"mention": "FULL", "type": "STATE", "canonical_name": "FULL"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "single_signal_multiple_states_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["operator"] == "="
+    assert parsed["logic"] == "OR"
+    assert parsed["states"] == ["DEGRADED", "FULL"]
+    assert parsed["need_review"] is False
 
 
 def test_syntactic_parser_expands_multi_signal_single_state_with_shall_be():
@@ -301,6 +324,81 @@ def test_syntactic_parser_treats_equal_or_greater_than_as_greater_or_equal():
 
     assert parsed["operator"] == ">="
     assert parsed["mention"] == "S_K_FACTOR_REQUEST >= P_LIMIT"
+
+
+def test_operator_higher_than():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED is higher than P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["type"] == "parameter_threshold_condition"
+    assert parsed["signal"] == "S_VEHICLE_SPEED"
+    assert parsed["operator"] == ">"
+    assert parsed["parameter"] == "P_SPEED_LIMIT"
+
+
+def test_operator_lower_than():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED is lower than P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["operator"] == "<"
+
+
+def test_operator_at_least():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED is at least P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["operator"] == ">="
+
+
+def test_operator_no_more_than():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED is no more than P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["operator"] == "<="
+
+
+def test_operator_exceeds():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED exceeds P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["operator"] == ">"
+
+
+def test_operator_is_equal_still_works():
+    parsed = parse_condition_line(
+        "S_VEHICLE_SPEED is equal to P_SPEED_LIMIT",
+        normalized_entities=[
+            {"mention": "S_VEHICLE_SPEED", "type": "SIGNAL", "canonical_name": "S_VEHICLE_SPEED"},
+            {"mention": "P_SPEED_LIMIT", "type": "PARAMETER", "canonical_name": "P_SPEED_LIMIT"},
+        ],
+    )
+
+    assert parsed["operator"] == "=="
 
 
 def test_syntactic_parser_parses_or_signal_value_state_clauses():
@@ -649,6 +747,63 @@ def test_syntactic_parser_uses_canonical_signal_for_absolute_natural_mention():
     assert parsed["type"] == "threshold_condition"
     assert parsed["signal"] == "S_COLUMN_TORQUE"
     assert parsed["transform"] == "ABS"
+
+
+def test_abs_alias_explicit_signal_greater_equal_parameter():
+    parsed = parse_condition_line(
+        "the absolute value of column torque(S_COLUMN_TORQUE) is greater than or equal to P_LIMIT",
+        normalized_entities=[
+            {"mention": "column torque", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["signal_mention"] == "column torque"
+    assert parsed["explicit_signal_mention"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+    assert parsed["operator"] == ">="
+    assert parsed["parameter"] == "P_LIMIT"
+    assert parsed["source"] == "abs_alias_explicit_signal_threshold_rule"
+    assert parsed["need_review"] is False
+
+
+def test_abs_alias_explicit_signal_symbolic_greater_equal():
+    parsed = parse_condition_line(
+        "|column torque(S_COLUMN_TORQUE)| >= P_LIMIT",
+        normalized_entities=[
+            {"mention": "column torque", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "S_COLUMN_TORQUE", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "threshold_condition"
+    assert parsed["signal"] == "S_COLUMN_TORQUE"
+    assert parsed["transform"] == "ABS"
+    assert parsed["operator"] == ">="
+    assert parsed["parameter"] == "P_LIMIT"
+    assert parsed["need_review"] is False
+
+
+def test_abs_alias_explicit_signal_canonical_mismatch_review():
+    parsed = parse_condition_line(
+        "the absolute value of column torque(S_OTHER_SIGNAL) is greater than or equal to P_LIMIT",
+        normalized_entities=[
+            {"mention": "column torque", "type": "SIGNAL", "canonical_name": "S_COLUMN_TORQUE"},
+            {"mention": "S_OTHER_SIGNAL", "type": "SIGNAL", "canonical_name": "S_OTHER_SIGNAL"},
+            {"mention": "P_LIMIT", "type": "PARAMETER", "canonical_name": "P_LIMIT"},
+        ],
+    )
+
+    assert parsed["condition_type"] == "threshold_condition"
+    assert parsed["transform"] == "ABS"
+    assert parsed["operator"] == ">="
+    assert parsed["parameter"] == "P_LIMIT"
+    assert parsed["need_review"] is True
+    assert parsed["review_reason"] == "abs_alias_explicit_signal_canonical_mismatch"
 
 
 def test_syntactic_parser_keeps_plain_threshold_without_transform():

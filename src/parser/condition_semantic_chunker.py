@@ -45,6 +45,7 @@ CONDITION_STATUS_PATTERN = re.compile(
 )
 TOP_LEVEL_CONNECTOR_PATTERN = re.compile(r"\b(and|or|but)\b", flags=re.IGNORECASE)
 PROPERTY_WORD_PATTERN = r"(?:availability|deviations?|resolution|validity|quality|status|accuracy)"
+ENUM_VALUE_PATTERN = r"(?:'[^\']+'|\"[^\"]+\"|P_[A-Z0-9_]+|[A-Z][A-Z0-9_]*|[A-Za-z]+)"
 SHARED_STATE_PATTERN = re.compile(
     r"\b(?:is|are)\s+(?P<state>valid|invalid|active|inactive|available|unavailable|degraded|enabled|disabled)\b",
     flags=re.IGNORECASE,
@@ -404,6 +405,68 @@ def looks_like_complete_condition_expression(text: str) -> bool:
     return bool(EXPLICIT_OPERATOR_PATTERN.search(candidate))
 
 
+def is_same_left_multiple_right_enum(text: str, connector: str = "or") -> bool:
+    if connector.lower() != "or":
+        return False
+
+    for match in re.finditer(r"\bor\b", text, flags=re.IGNORECASE):
+        span = [match.start(), match.end()]
+        if not _is_top_level_span(text, span):
+            continue
+        left_text = text[: match.start()].strip()
+        right_text = text[match.end() :].strip()
+        if not left_text or not right_text:
+            continue
+        if not _looks_like_left_with_operator_and_right_value(left_text):
+            continue
+        if _looks_like_new_condition_expression(right_text):
+            continue
+        if re.fullmatch(ENUM_VALUE_PATTERN, right_text.strip(), flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def same_left_multiple_right_enum_spec(text: str) -> tuple | None:
+    if not is_same_left_multiple_right_enum(text, connector="or"):
+        return None
+    span = _trim_span(text, [0, len(text)])
+    return (
+        span,
+        "atomic_condition",
+        "full_sentence",
+        {
+            "right_side_enum": True,
+            "logic": "OR",
+        },
+    )
+
+
+def _looks_like_left_with_operator_and_right_value(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return False
+    return bool(
+        re.search(
+            rf"(?:\bis\s+not\s+equal\s+to\b|\b(?:is|are)\s+equal\s+to\b|\b(?:is|are)\b|==|=)\s+{ENUM_VALUE_PATTERN}\s*$",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _looks_like_new_condition_expression(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return False
+    return bool(
+        re.search(r"\b(?:S_[A-Z0-9_]+|DEM_[A-Z0-9_]+|COMPONENT|SIGNAL)\b", candidate, flags=re.IGNORECASE)
+        and (
+            CONDITION_RELATION_PATTERN.search(candidate)
+            or EXPLICIT_OPERATOR_PATTERN.search(candidate)
+        )
+    )
+
+
 def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tuple]:
     square_bracket_specs = _square_bracket_group_specs(text)
     if square_bracket_specs:
@@ -434,6 +497,10 @@ def _collect_chunk_specs(text: str, allow_logical_split: bool = True) -> List[tu
     temporal_specs = _temporal_constraint_specs(text)
     if temporal_specs:
         return temporal_specs
+
+    same_left_enum = same_left_multiple_right_enum_spec(text)
+    if same_left_enum:
+        return [same_left_enum]
 
     if allow_logical_split:
         logical_specs = _logical_clause_specs(text)

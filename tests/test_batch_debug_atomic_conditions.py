@@ -183,7 +183,7 @@ def test_run_batch_debug_atomic_conditions_can_use_syntactic_parser(tmp_path):
 
     assert rows[0]["atomic_parser"] == "syntactic"
     assert rows[0]["syntax_analysis"]["placeholder_text"] == "SIGNAL_1 shall be STATE_1 or STATE_2"
-    assert rows[0]["parsed"]["type"] == "condition_group"
+    assert rows[0]["parsed"]["type"] == "single_signal_multiple_states_condition"
     assert rows[0]["parsed"]["logic"] == "OR"
 
     parsed_without_review = tmp_path / "debug_report.parsed_without_review.md"

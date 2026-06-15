@@ -348,6 +348,38 @@ def test_chunk_condition_sentence_splits_top_level_or_conditions():
     assert result["chunks"][0]["logic_after"] == "OR"
 
 
+def test_chunker_does_not_split_same_left_or_enum_uninitialized_unavailable():
+    text = "the column signal (S_COLUMN_TORQUE) is equal to UNINITIALIZED or UNAVAILABLE"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["chunk_type"] == "atomic_condition"
+    assert result["chunks"][0]["text"] == text
+    assert result["chunks"][0].get("right_side_enum") is True
+    assert result["chunks"][0].get("logic") == "OR"
+
+
+def test_chunker_does_not_split_same_left_or_enum_degraded_full():
+    text = "the column signal (S_COLUMN_TORQUE) is equal to DEGRADED or FULL"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["text"] == text
+
+
+def test_chunker_still_splits_true_or_conditions():
+    text = "S_A is equal to VALID or S_B is equal to INVALID"
+
+    result = chunk_condition_sentence(text, normalized_entities=[])
+
+    assert [chunk["text"] for chunk in result["chunks"]] == [
+        "S_A is equal to VALID",
+        "S_B is equal to INVALID",
+    ]
+
+
 def test_chunk_condition_sentence_splits_top_level_but_as_contrast():
     result = chunk_condition_sentence("S_A is valid but S_B is invalid", normalized_entities=[])
 

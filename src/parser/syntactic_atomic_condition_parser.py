@@ -63,6 +63,7 @@ def parse_syntactic_atomic_conditions(text: str, normalized_entities: List[JsonD
     conditions.extend(parse_multi_entity_property_threshold_condition(placeholder_text, placeholder_map, original_text=text))
     conditions.extend(_parse_entity_property_state_condition(text, placeholder_text, placeholder_map))
     conditions.extend(_parse_component_state_condition(text, placeholder_text, components, right_entities, placeholder_map))
+    conditions.extend(_parse_abs_alias_explicit_signal_threshold(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_parenthesized_signal_state_with_predicate(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_explicit_parenthesized_condition(text, placeholder_text, signals, right_entities, placeholder_map))
     conditions.extend(_parse_feature_component_state_condition(text, placeholder_text, features + signals, components, right_entities, placeholder_map))
@@ -207,6 +208,80 @@ def _parse_component_state_condition(
     if not condition:
         return []
     condition["parser"] = "syntactic"
+    return [condition]
+
+
+def _parse_abs_alias_explicit_signal_threshold(
+    original_text: str,
+    placeholder_text: str,
+    signals: List[str],
+    right_entities: List[str],
+    placeholder_map: JsonDict,
+) -> List[JsonDict]:
+    if len(signals) != 2 or len(right_entities) != 1:
+        return []
+
+    right_placeholder = right_entities[0]
+    if str(placeholder_map[right_placeholder]["entity"].get("type", "")).upper() not in {"PARAMETER", "VALUE"}:
+        return []
+
+    signal_pattern = r"(?P<alias>SIGNAL_\d+)\s*\(\s*(?P<explicit>SIGNAL_\d+)\s*\)"
+    abs_patterns = [
+        rf"\b(?:the\s+)?absolute\s+value\s+of\s+{signal_pattern}",
+        rf"\babs\s*\(\s*{signal_pattern}\s*\)",
+        rf"\|\s*{signal_pattern}\s*\|",
+    ]
+    match = None
+    for pattern in abs_patterns:
+        match = re.search(
+            rf"{pattern}\s*(?P<predicate>.*?)\s*{re.escape(right_placeholder)}\b",
+            placeholder_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            break
+    if not match:
+        return []
+
+    alias_signal = match.group("alias")
+    explicit_signal = match.group("explicit")
+    if alias_signal not in signals or explicit_signal not in signals:
+        return []
+
+    operator = _operator_from_text(match.group("predicate")) or "=="
+    right_entity = placeholder_map[right_placeholder]["entity"]
+    explicit_entity = placeholder_map[explicit_signal]["entity"]
+    alias_entity = placeholder_map[alias_signal]["entity"]
+    condition = _condition_for_right_entity(
+        original_text,
+        explicit_entity,
+        right_entity,
+        operator=operator,
+    )
+    if not condition:
+        return []
+
+    if condition.get("type") == "parameter_threshold_condition":
+        condition["condition_type"] = "threshold_condition"
+    else:
+        condition["condition_type"] = condition.get("type")
+    condition["signal"] = str(explicit_entity.get("canonical_name") or explicit_entity.get("mention"))
+    condition["signal_mention"] = _display_entity_mention(original_text, alias_entity)
+    condition["explicit_signal_mention"] = _display_entity_mention(original_text, explicit_entity)
+    condition["transform"] = "ABS"
+    condition["source"] = "abs_alias_explicit_signal_threshold_rule"
+    condition["parser"] = "syntactic"
+    condition["need_review"] = False
+    condition["confidence"] = {
+        "overall": 0.93,
+        "structure": 0.93,
+        "normalization": 0.95,
+    }
+    if not _same_canonical_entity(alias_entity, explicit_entity):
+        condition["need_review"] = True
+        condition["review_reason"] = "abs_alias_explicit_signal_canonical_mismatch"
+        condition["confidence"]["overall"] = 0.72
+        condition["confidence"]["normalization"] = 0.72
     return [condition]
 
 
@@ -1158,24 +1233,71 @@ def _parse_single_signal_multi_right(
     right_entities: List[str],
     placeholder_map: JsonDict,
 ) -> List[JsonDict]:
-    if len(signals) != 1 or len(right_entities) < 2:
+    if len(right_entities) < 2:
+        return []
+
+    signal_placeholder = signals[0] if len(signals) == 1 else None
+    outer_signal = None
+    if len(signals) == 2:
+        alias_match = re.search(
+            r"\b(?P<outer>SIGNAL_\d+)\s*\(\s*(?P<inner>SIGNAL_\d+)\s*\)",
+            placeholder_text,
+            flags=re.IGNORECASE,
+        )
+        if not alias_match:
+            return []
+        outer_signal = alias_match.group("outer")
+        signal_placeholder = alias_match.group("inner")
+
+    if not signal_placeholder:
         return []
 
     ordered_rights = _ordered_placeholders(placeholder_text, right_entities)
-    if not _has_relation_between(placeholder_text, signals[0], ordered_rights[0]):
+    if not _has_relation_between(placeholder_text, signal_placeholder, ordered_rights[0]):
         return []
 
     logic = _placeholder_list_logic(placeholder_text, ordered_rights)
     if not logic:
         return []
 
-    signal = placeholder_map[signals[0]]["entity"]
+    signal = placeholder_map[signal_placeholder]["entity"]
+    if all(str(placeholder_map[right]["entity"].get("type", "")).upper() == "STATE" for right in ordered_rights):
+        operator = _operator_for_right_placeholder(placeholder_text, signal_placeholder, ordered_rights, ordered_rights[0])
+        output_operator = "=" if operator == "==" else operator
+        condition = {
+            "type": "single_signal_multiple_states_condition",
+            "condition_type": "single_signal_multiple_states_condition",
+            "signal": str(signal.get("canonical_name") or signal.get("mention")),
+            "signal_mention": _display_entity_mention(original_text, placeholder_map[outer_signal]["entity"] if outer_signal else signal),
+            "operator": output_operator,
+            "logic": logic,
+            "states": [
+                str(placeholder_map[right]["entity"].get("canonical_name") or placeholder_map[right]["entity"].get("mention"))
+                for right in ordered_rights
+            ],
+            "state_mentions": [
+                _display_entity_mention(original_text, placeholder_map[right]["entity"])
+                for right in ordered_rights
+            ],
+            "source": "single_signal_multiple_right_states_rule",
+            "parser": "syntactic",
+            "need_review": False,
+        }
+        if outer_signal:
+            condition["explicit_signal_mention"] = _display_entity_mention(original_text, signal)
+            if not _same_canonical_entity(placeholder_map[outer_signal]["entity"], signal):
+                condition["need_review"] = True
+                condition["review_reason"] = "alias_explicit_signal_canonical_mismatch"
+        if output_operator == "!=":
+            condition["polarity"] = "negative"
+        return [condition]
+
     children = [
         _condition_for_right_entity(
             original_text,
             signal,
             placeholder_map[right]["entity"],
-            operator=_operator_for_right_placeholder(placeholder_text, signals[0], ordered_rights, right),
+            operator=_operator_for_right_placeholder(placeholder_text, signal_placeholder, ordered_rights, right),
         )
         for right in ordered_rights
     ]
